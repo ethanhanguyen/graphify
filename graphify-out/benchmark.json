@@ -1,7 +1,7 @@
 {
-  "phase": "5-phase-title",
-  "phase_number": 5,
-  "timestamp": "2026-04-29T21:49:43.297266+00:00",
+  "phase": "7-phase-title",
+  "phase_number": 7,
+  "timestamp": "2026-04-29T22:48:51.073588+00:00",
   "graph_stats": {
     "nodes": 1786,
     "edges": 3594,
@@ -10,49 +10,49 @@
     "used_edges": 3594
   },
   "query_latency_ms": {
-    "avg": 0.09,
+    "avg": 0.07,
     "p50": 0.07,
-    "p95": 0.22,
-    "p99": 0.22,
-    "qps": 11448.46
+    "p95": 0.15,
+    "p99": 0.2,
+    "qps": 13580.54
   },
   "pathfinding_ms": {
     "4hop_avg": 0.01,
     "6hop_avg": 0.02,
-    "10hop_avg": 0.08
+    "10hop_avg": 0.07
   },
   "memory_mb": {
     "graph": 4.49,
-    "total": 54.3,
+    "total": 53.88,
     "bytes_per_node": 2634.71,
     "bytes_per_edge": 1309.29
   },
   "scale": [
     {
       "nodes": 50000,
-      "qps": 37683.69,
+      "qps": 34495.65,
       "p95_ms": 0.05,
       "bytes_per_node": 1149.88,
       "bytes_per_edge": 574.94
     },
     {
       "nodes": 100000,
-      "qps": 23629.49,
-      "p95_ms": 0.08,
+      "qps": 31038.22,
+      "p95_ms": 0.07,
       "bytes_per_node": 1150.02,
       "bytes_per_edge": 575.01
     },
     {
       "nodes": 500000,
-      "qps": 5788.32,
-      "p95_ms": 0.39,
+      "qps": 6605.57,
+      "p95_ms": 0.35,
       "bytes_per_node": 1150.94,
       "bytes_per_edge": 575.47
     },
     {
       "nodes": 1000000,
-      "qps": 2464.5,
-      "p95_ms": 1.79,
+      "qps": 2773.15,
+      "p95_ms": 1.67,
       "bytes_per_node": 1151.07,
       "bytes_per_edge": 575.54
     }
