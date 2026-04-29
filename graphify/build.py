@@ -52,7 +52,8 @@ def _validate_typed_nodes(nodes: list[dict]) -> list[str]:
 
 
 def build_from_json(extraction: dict, *, directed: bool = False, build_indexes: bool = True,
-                    materialize: list[str] | None = None) -> nx.Graph:
+                    materialize: list[str] | None = None,
+                    trace_processes: bool = False) -> nx.Graph:
     """Build a NetworkX graph from an extraction dict.
 
     directed=True produces a DiGraph that preserves edge direction (source→target).
@@ -128,10 +129,22 @@ def build_from_json(extraction: dict, *, directed: bool = False, build_indexes: 
         for rel_type in materialize:
             closure = compute_transitive_closure(G, rel_type)
             write_materialized_view(closure, rel_type, matviews_dir)
+    if trace_processes:
+        from .processes import build_processes, write_processes_json
+        processes = build_processes(G)
+        write_processes_json(processes)
+        for proc in processes:
+            for i in range(len(proc.steps) - 1):
+                G.add_edge(
+                    proc.steps[i].node_id, proc.steps[i + 1].node_id,
+                    relation="step_in_process", confidence="INFERRED",
+                    process_id=proc.id, step_index=i,
+                )
     return G
 
 
-def build(extractions: list[dict], *, directed: bool = False, build_indexes: bool = True) -> nx.Graph:
+def build(extractions: list[dict], *, directed: bool = False, build_indexes: bool = True,
+          trace_processes: bool = False) -> nx.Graph:
     """Merge multiple extraction results into one graph.
 
     directed=True produces a DiGraph that preserves edge direction (source→target).
@@ -149,7 +162,8 @@ def build(extractions: list[dict], *, directed: bool = False, build_indexes: boo
         combined["hyperedges"].extend(ext.get("hyperedges", []))
         combined["input_tokens"] += ext.get("input_tokens", 0)
         combined["output_tokens"] += ext.get("output_tokens", 0)
-    return build_from_json(combined, directed=directed, build_indexes=build_indexes)
+    return build_from_json(combined, directed=directed, build_indexes=build_indexes,
+                           trace_processes=trace_processes)
 
 
 def _norm_label(label: str) -> str:
@@ -210,6 +224,7 @@ def build_merge(
     *,
     directed: bool = False,
     build_indexes: bool = True,
+    trace_processes: bool = False,
 ) -> nx.Graph:
     """Load existing graph.json, merge new chunks into it, and save back.
 
@@ -235,7 +250,8 @@ def build_merge(
         base = []
 
     all_chunks = base + list(new_chunks)
-    G = build(all_chunks, directed=directed, build_indexes=build_indexes)
+    G = build(all_chunks, directed=directed, build_indexes=build_indexes,
+              trace_processes=trace_processes)
 
     # Prune nodes from deleted source files
     if prune_sources:

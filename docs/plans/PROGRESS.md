@@ -1,6 +1,6 @@
 # Graphify Fork Enhancement — Progress Tracker
 
-**Last updated:** 2026-04-29 (Phase 8 done — PR 5 complete)
+**Last updated:** 2026-04-29 (Phase 9 done — PR 6 complete)
 **Repo:** ~/graphify
 **Baseline commit:** 28b17d3 (pre-phase, before PR plan was formalized)
 
@@ -13,7 +13,7 @@
 | 3 | pr-3 | A | ✅ Done | 2026-04-29 | 2026-04-29 | 09e6168 | graphify-out/benchmarks/phase-3-benchmark.json | — |
 | 4 | pr-4 | A | ✅ Done | 2026-04-29 | 2026-04-29 | 2dcc578 | graphify-out/benchmarks/phase-4-benchmark.json | — |
 | 5 | pr-5 | B | ✅ Done | 2026-04-29 | 2026-04-29 | 440578a | graphify-out/benchmarks/phase-5-benchmark.json | — |
-| 6 | pr-6 | B | ⬜ Not started | — | — | — | — | — |
+| 6 | pr-6 | B | ✅ Done | 2026-04-29 | 2026-04-29 | 474a400 | graphify-out/benchmarks/phase-6-benchmark.json | — |
 | 7 | pr-7 | B | ⬜ Not started | — | — | — | — | — |
 | 8 | pr-8 | B | ⬜ Not started | — | — | — | — | — |
 | 9 | pr-9 | B | ⬜ Not started | — | — | — | — | — |
@@ -123,3 +123,4 @@ python -m graphify benchmark --seed 42 --phase N
 | pr-3 | 09e6168 | `feat(phase-4-5): query planner + cache + materialized views` |
 | pr-4 | 2dcc578 | `feat(phase-6-7): bloom filter + graph sampling + embeddings + final benchmark report` |
 | pr-5 | 440578a | `feat(phase-8): typed code schema (17 node types, 21 edge types)` |
+| pr-6 | 474a400 | `feat(phase-9): call resolution engine (6-stage DAG + MRO walk)` |

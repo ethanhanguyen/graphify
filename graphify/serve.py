@@ -464,6 +464,18 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
                     "required": ["target"],
                 },
             ),
+            types.Tool(
+                name="detect_changes",
+                description="Detect impact of file changes on processes. Pass 'scope' with comma-separated file paths.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "scope": {"type": "string", "default": "all",
+                                 "description": "Comma-separated list of changed file paths, or 'all'"},
+                    },
+                    "required": [],
+                },
+            ),
         ]
 
     def _tool_query_graph(arguments: dict) -> str:
@@ -839,7 +851,19 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         lines.append(f"summary:")
         lines.append(f"  total_affected: {total_affected}")
         lines.append(f"  risk_level: {risk}")
+        lines.append(f"  affected_processes: []")
         return "\n".join(lines)
+
+    def _tool_detect_changes(arguments: dict) -> str:
+        from graphify.processes import build_processes, detect_changes
+        scope = arguments.get("scope", "all")
+        if scope == "all":
+            changed_files = []
+        else:
+            changed_files = [f.strip() for f in scope.split(",") if f.strip()]
+        processes = build_processes(G)
+        result = detect_changes(G, processes, changed_files=changed_files)
+        return json.dumps(result, indent=2, default=str)
 
     _handlers = {
         "query_graph": _tool_query_graph,
@@ -851,6 +875,7 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         "shortest_path": _tool_shortest_path,
         "context": _tool_context,
         "impact": _tool_impact,
+        "detect_changes": _tool_detect_changes,
     }
 
     @server.call_tool()

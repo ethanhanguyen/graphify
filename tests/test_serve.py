@@ -286,3 +286,33 @@ def test_score_nodes_index_no_matches():
     G.graph["indexes"] = {"label_index": build_label_index(G)}
     scored = _score_nodes(G, ["zzzzzz"])
     assert scored == []
+
+
+# --- detect_changes tool response format ---
+
+def test_detect_changes_tool_response():
+    G = nx.Graph()
+    G.add_node("n1", label="handle_root()", source_file="handlers.py",
+               source_location="L10", node_type="FUNCTION")
+    G.add_node("n2", label="do_auth()", source_file="auth.py",
+               source_location="L20", node_type="FUNCTION")
+    G.add_node("n3", label="query_db()", source_file="db.py",
+               source_location="L30", node_type="FUNCTION")
+    G.add_node("n4", label="main()", source_file="main.py",
+               source_location="L1", node_type="FUNCTION")
+    G.add_edge("n1", "n2", relation="calls", confidence="EXTRACTED",
+               confidence_score=1.0)
+    G.add_edge("n2", "n3", relation="calls", confidence="EXTRACTED",
+               confidence_score=1.0)
+    G.add_edge("n1", "n4", relation="handles_route", confidence="EXTRACTED",
+               route="/api")
+
+    from graphify.processes import build_processes, detect_changes
+    procs = build_processes(G)
+    result = detect_changes(G, procs, changed_files=["auth.py"])
+    assert "summary" in result
+    assert "changed_symbols" in result
+    assert "affected_processes" in result
+    assert "recommendations" in result
+    assert result["summary"]["risk_level"] in ("LOW", "MEDIUM", "HIGH")
+    assert result["summary"]["changed_count"] == 1

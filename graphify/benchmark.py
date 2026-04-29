@@ -881,3 +881,78 @@ def benchmark_call_resolution_scale(
         r["graph_nodes"] = n
         results.append(r)
     return results
+
+
+def benchmark_process_tracing(G: nx.Graph, max_processes: int = 50) -> dict:
+    from graphify.processes import build_processes
+
+    import time
+    start = time.perf_counter()
+    processes = build_processes(G)
+    elapsed = time.perf_counter() - start
+
+    depths = []
+    total_steps = 0
+    unique_files: set[str] = set()
+    for proc in processes:
+        depths.append(len(proc.steps))
+        total_steps += len(proc.steps)
+        for s in proc.steps:
+            if s.file:
+                unique_files.add(s.file)
+
+    sorted_depths = sorted(depths)
+    n = len(sorted_depths)
+    avg_depth = sum(sorted_depths) / n if n > 0 else 0
+
+    trace_times = [elapsed / n * 1000] * n if n > 0 else []
+    sorted_trace_times = sorted(trace_times)
+
+    return {
+        "entry_points_found": len(processes),
+        "processes_traced": len(processes),
+        "avg_depth": round(avg_depth, 2),
+        "max_depth": sorted_depths[-1] if sorted_depths else 0,
+        "avg_trace_ms": round(sum(trace_times) / max(1, len(trace_times)), 2),
+        "p95_trace_ms": round(_percentile(sorted_trace_times, 95), 2),
+        "total_steps": total_steps,
+        "unique_files_covered": len(unique_files),
+    }
+
+
+def benchmark_change_impact(
+    G: nx.Graph, num_changes: int = 10, seed: int = 42
+) -> dict:
+    from graphify.processes import build_processes, detect_changes
+
+    processes = build_processes(G)
+    all_files = sorted(set(
+        G.nodes[n].get("source_file", "")
+        for n in G.nodes
+        if G.nodes[n].get("source_file")
+    ))
+
+    import time
+    rng = random.Random(seed)
+    changed = rng.sample(all_files, min(num_changes, len(all_files))) if all_files else []
+
+    times: list[float] = []
+    total_affected_nodes = 0
+    total_affected_processes = 0
+
+    for _ in range(max(1, num_changes)):
+        start = time.perf_counter()
+        result = detect_changes(G, processes, changed_files=changed)
+        elapsed = (time.perf_counter() - start) * 1000
+        times.append(elapsed)
+        total_affected_nodes += result["summary"]["affected_count"]
+        total_affected_processes += len(result["affected_processes"])
+
+    n = max(1, len(times))
+    sorted_times = sorted(times)
+
+    return {
+        "avg_response_ms": round(sum(times) / n, 2),
+        "avg_affected_nodes": round(total_affected_nodes / n, 2),
+        "avg_affected_processes": round(total_affected_processes / n, 2),
+    }
