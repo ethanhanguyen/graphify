@@ -986,6 +986,16 @@ def main() -> None:
         print()
         print("Commands:")
         print("  install [--platform P]  copy skill to platform config dir (claude|windows|codex|opencode|aider|claw|droid|trae|trae-cn|gemini|cursor|antigravity|hermes|kiro)")
+        print("  register [path]          register a repo in ~/.graphify/registry.json")
+        print("  unregister <repo_id>     unregister a repo")
+        print("  repos                    list registered repos")
+        print("  group create <name>      create a repo group")
+        print("  group add <name> <repo>  add a repo to a group")
+        print("  group remove <name> <repo>  remove a repo from a group")
+        print("  group list               list all groups")
+        print("  group sync <name>        sync cross-repo contracts")
+        print("  group status <name>      show group status")
+        print("  group query <name> <q>   query across a group")
         print("  path \"A\" \"B\"            shortest path between two nodes in graph.json")
         print("    --graph <path>          path to graph.json (default graphify-out/graph.json)")
         print("  explain \"X\"             plain-language explanation of a node and its neighbors")
@@ -1549,6 +1559,108 @@ def main() -> None:
                 i += 1
         local_path = _clone_repo(url, branch=branch, out_dir=out_dir)
         print(local_path)
+
+    elif cmd == "register":
+        from graphify.registry import register_repo
+        repo_path = sys.argv[2] if len(sys.argv) > 2 else "."
+        entry = register_repo(repo_path)
+        print(f"Registered: {entry.repo_id}")
+        print(f"  Name: {entry.name}")
+        print(f"  Path: {entry.path}")
+        print(f"  HEAD: {entry.last_commit or 'N/A'}")
+
+    elif cmd == "unregister":
+        if len(sys.argv) < 3:
+            print("Usage: graphify unregister <repo_id>", file=sys.stderr)
+            sys.exit(1)
+        from graphify.registry import unregister_repo
+        repo_id = sys.argv[2]
+        if unregister_repo(repo_id):
+            print(f"Unregistered: {repo_id}")
+        else:
+            print(f"Repo not found: {repo_id}", file=sys.stderr)
+            sys.exit(1)
+
+    elif cmd == "repos":
+        from graphify.registry import list_repos
+        repos = list_repos()
+        if not repos:
+            print("No repos registered.")
+        else:
+            for r in repos:
+                stale = " [STALE]" if r.last_commit and r.last_commit != "N/A" else ""
+                print(f"  {r.repo_id} — {r.path}{stale}")
+
+    elif cmd == "group":
+        if len(sys.argv) < 3:
+            print("Usage: graphify group [create|add|remove|sync|status|query|list]", file=sys.stderr)
+            sys.exit(1)
+        sub = sys.argv[2]
+        from graphify.groups import (
+            create_group, add_to_group, remove_from_group, list_groups,
+            get_group_repos, sync_group, query_group, group_status,
+        )
+        if sub == "create":
+            if len(sys.argv) < 4:
+                print("Usage: graphify group create <name>", file=sys.stderr)
+                sys.exit(1)
+            name = sys.argv[3]
+            result = create_group(name)
+            print(f"Group created: {name}")
+
+        elif sub == "add":
+            if len(sys.argv) < 5:
+                print("Usage: graphify group add <name> <repo_id>", file=sys.stderr)
+                sys.exit(1)
+            name, repo_id = sys.argv[3], sys.argv[4]
+            add_to_group(name, repo_id)
+            print(f"Added {repo_id} to group {name}")
+
+        elif sub == "remove":
+            if len(sys.argv) < 5:
+                print("Usage: graphify group remove <name> <repo_id>", file=sys.stderr)
+                sys.exit(1)
+            name, repo_id = sys.argv[3], sys.argv[4]
+            remove_from_group(name, repo_id)
+            print(f"Removed {repo_id} from group {name}")
+
+        elif sub == "list":
+            groups = list_groups()
+            if not groups:
+                print("No groups configured.")
+            else:
+                for g in groups:
+                    repos = get_group_repos(g)
+                    print(f"  {g}: {len(repos)} repos")
+
+        elif sub == "sync":
+            if len(sys.argv) < 4:
+                print("Usage: graphify group sync <name>", file=sys.stderr)
+                sys.exit(1)
+            name = sys.argv[3]
+            result = sync_group(name)
+            print(json.dumps(result, indent=2))
+
+        elif sub == "status":
+            if len(sys.argv) < 4:
+                print("Usage: graphify group status <name>", file=sys.stderr)
+                sys.exit(1)
+            name = sys.argv[3]
+            result = group_status(name)
+            print(json.dumps(result, indent=2))
+
+        elif sub == "query":
+            if len(sys.argv) < 5:
+                print("Usage: graphify group query <name> <query>", file=sys.stderr)
+                sys.exit(1)
+            name, q = sys.argv[3], sys.argv[4]
+            result = query_group(name, q)
+            print(json.dumps(result, indent=2))
+
+        else:
+            print(f"error: unknown group command '{sub}'", file=sys.stderr)
+            print("Usage: graphify group [create|add|remove|sync|status|query|list]", file=sys.stderr)
+            sys.exit(1)
 
     elif cmd == "benchmark":
         from graphify.benchmark import run_full_benchmark

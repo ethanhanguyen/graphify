@@ -545,6 +545,56 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
                     "required": [],
                 },
             ),
+            types.Tool(
+                name="group_list",
+                description="List all configured repository groups with member counts.",
+                inputSchema={"type": "object", "properties": {}, "required": []},
+            ),
+            types.Tool(
+                name="group_sync",
+                description="Sync cross-repo contracts and bridges for a group.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Group name"},
+                    },
+                    "required": ["name"],
+                },
+            ),
+            types.Tool(
+                name="group_contracts",
+                description="Show shared interfaces and cross-repo links for a group.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Group name"},
+                    },
+                    "required": ["name"],
+                },
+            ),
+            types.Tool(
+                name="group_query",
+                description="Search across all repos in a group and merge results.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Group name"},
+                        "query": {"type": "string", "description": "Search query"},
+                    },
+                    "required": ["name", "query"],
+                },
+            ),
+            types.Tool(
+                name="group_status",
+                description="Check staleness and stats for all repos in a group.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Group name"},
+                    },
+                    "required": ["name"],
+                },
+            ),
         ]
 
     def _tool_query_graph(arguments: dict) -> str:
@@ -954,6 +1004,62 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         result = detect_changes(G, processes, changed_files=changed_files)
         return json.dumps(result, indent=2, default=str)
 
+    def _tool_group_list(_: dict) -> str:
+        from graphify.groups import list_groups, get_group_repos
+        groups = list_groups()
+        if not groups:
+            return "No groups configured."
+        lines = ["Repository Groups:"]
+        for g in groups:
+            repos = get_group_repos(g)
+            lines.append(f"  {g}: {len(repos)} repos")
+        return "\n".join(lines)
+
+    def _tool_group_sync(arguments: dict) -> str:
+        from graphify.groups import sync_group
+        result = sync_group(arguments["name"])
+        return json.dumps(result, indent=2)
+
+    def _tool_group_contracts(arguments: dict) -> str:
+        from graphify.groups import get_group_repos
+        from graphify.lazy_pool import GraphPool
+        from graphify.contract_bridge import detect_shared_interfaces
+        name = arguments["name"]
+        repos = get_group_repos(name)
+        pool = GraphPool()
+        graphs: dict = {}
+        for rid in repos:
+            g = pool.get_graph(rid)
+            if g is not None:
+                graphs[rid] = g
+        pool.close()
+        interfaces = detect_shared_interfaces(graphs)
+        if not interfaces:
+            return f"No shared interfaces found across repos in group '{name}'."
+        lines = [f"Shared interfaces in group '{name}':"]
+        for iface in interfaces:
+            lines.append(f"  {iface['interface_name']}: {iface['repos']}")
+            if iface.get("methods"):
+                lines.append(f"    methods: {', '.join(iface['methods'])}")
+        return "\n".join(lines)
+
+    def _tool_group_query(arguments: dict) -> str:
+        from graphify.groups import query_group
+        result = query_group(arguments["name"], arguments["query"])
+        return json.dumps(result, indent=2)
+
+    def _tool_group_status(arguments: dict) -> str:
+        from graphify.groups import group_status
+        result = group_status(arguments["name"])
+        lines = [f"Group '{arguments['name']}' status:"]
+        for repo in result.get("repos", []):
+            stale_mark = " *STALE*" if repo.get("stale") else ""
+            lines.append(
+                f"  {repo['repo_id']}: {repo.get('nodes', 0)} nodes, {repo.get('edges', 0)} edges"
+                f" | indexed: {repo.get('last_indexed', 'never')}{stale_mark}"
+            )
+        return "\n".join(lines)
+
     _handlers = {
         "query_graph": _tool_query_graph,
         "query": _tool_query_graph,
@@ -966,6 +1072,11 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         "context": _tool_context,
         "impact": _tool_impact,
         "detect_changes": _tool_detect_changes,
+        "group_list": _tool_group_list,
+        "group_sync": _tool_group_sync,
+        "group_contracts": _tool_group_contracts,
+        "group_query": _tool_group_query,
+        "group_status": _tool_group_status,
     }
 
     @server.call_tool()

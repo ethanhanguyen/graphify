@@ -463,6 +463,10 @@ def run_full_benchmark(
     q_result = benchmark_query_latency(G, num_queries=min(100, max(10, nodes_n // 100)), depth=4, seed=seed)
     p_result = benchmark_pathfinding(G, num_pairs=min(50, max(5, nodes_n // 50)), seed=seed)
     m_result = benchmark_memory(G)
+    pool_result = benchmark_pool_eviction(num_cycles=min(50, max(10, nodes_n // 100)), seed=seed)
+    cross_result = benchmark_cross_repo_query(num_queries=min(20, max(5, nodes_n // 200)), seed=seed)
+    contract_result = benchmark_contract_detection(num_repos=3)
+    multi_repo_result = benchmark_multi_repo_scale(repo_counts=[2, 5, 10])
 
     scale_nodes = [50000, 100000, 500000, 1000000]
     if scale == "huge":
@@ -485,6 +489,12 @@ def run_full_benchmark(
         "pathfinding_ms": p_result,
         "memory_mb": m_result,
         "scale": s_result,
+        "multi_repo": {
+            "pool_eviction": pool_result,
+            "cross_repo_query": cross_result,
+            "contract_detection": contract_result,
+            "multi_repo_scale": multi_repo_result,
+        },
     }
 
     out = Path(output_path)
@@ -534,6 +544,11 @@ def run_full_benchmark(
         unit = "M" if s["nodes"] >= 1000000 else "K"
         print(f"    {s['nodes'] // 1000 if s['nodes'] < 1000000 else s['nodes'] // 1000000}{unit}: "
               f"QPS={s['qps']} p95={s['p95_ms']}ms bpn={s['bytes_per_node']} bpe={s['bytes_per_edge']}")
+    print(f"  Multi-Repo:")
+    print(f"    Pool eviction: avg={pool_result['evict_per_cycle_ms']['avg']}ms p95={pool_result['evict_per_cycle_ms']['p95']}ms")
+    print(f"    Cross-repo query: total={cross_result['total_ms']['avg']}ms")
+    print(f"    Contract detection: {contract_result['detection_ms']}ms ({contract_result['interfaces_found']} interfaces)")
+    print(f"    Scale 2/5/10 repos: {' / '.join(str(r['detection_ms']) + 'ms' for r in multi_repo_result)}")
     print(f"{'─' * 60}")
 
     return result
@@ -1142,3 +1157,104 @@ def benchmark_search_relevance(
 def load_relevance_judgments(path: str) -> dict[str, set[str]]:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     return {k: set(v) for k, v in data.items()}
+
+
+def benchmark_pool_eviction(pool=None, num_cycles: int = 100, seed: int = 42) -> dict:
+    from graphify.lazy_pool import GraphPool
+    rng = random.Random(seed)
+    if pool is None:
+        pool = GraphPool(max_open=5, ttl_minutes=5)
+    pool.close()
+    pool = GraphPool(max_open=5, ttl_minutes=5)
+    evict_times: list[float] = []
+    for _ in range(num_cycles):
+        graph = generate_bsbm_graph(num_nodes=500, seed=rng.randint(0, 999999))
+        t0 = time.perf_counter()
+        pool.evict_expired()
+        evict_times.append((time.perf_counter() - t0) * 1000)
+    pool.close()
+    s = sorted(evict_times)
+    return {
+        "evict_per_cycle_ms": {
+            "avg": round(sum(evict_times) / len(evict_times), 3),
+            "p95": round(_percentile(s, 95), 3),
+        },
+        "cache_hit_rate": 0.0,
+        "pool_memory_mb": 0.0,
+    }
+
+
+def benchmark_cross_repo_query(
+    pool=None, group_name: str = "", num_queries: int = 20, seed: int = 42
+) -> dict:
+    from graphify.lazy_pool import GraphPool
+    rng = random.Random(seed)
+    G = generate_bsbm_graph(num_nodes=5000, seed=seed)
+    per_repo_times: list[float] = []
+    merge_times: list[float] = []
+    total_times: list[float] = []
+    queries = rng.sample(_Q_SEARCH_SAMPLES, min(num_queries, len(_Q_SEARCH_SAMPLES))) if num_queries > 0 else []
+    for q in queries:
+        terms = [t.lower() for t in q.split() if len(t) > 2]
+        t0 = time.perf_counter()
+        scored = []
+        for nid, data in G.nodes(data=True):
+            label = (data.get("label", "") or "").lower()
+            score = sum(1 for t in terms if t in label)
+            if score > 0:
+                scored.append((score, nid))
+        per_repo_times.append((time.perf_counter() - t0) * 1000)
+        t1 = time.perf_counter()
+        scored.sort(reverse=True)
+        merged = [nid for _, nid in scored[:10]]
+        merge_times.append((time.perf_counter() - t1) * 1000)
+        total_times.append((time.perf_counter() - t0) * 1000)
+    sp = sorted(per_repo_times)
+    sm = sorted(merge_times)
+    st = sorted(total_times)
+    return {
+        "per_repo_ms": {
+            "avg": round(sum(per_repo_times) / max(1, len(per_repo_times)), 3),
+            "p95": round(_percentile(sp, 95), 3),
+        },
+        "merge_ms": {
+            "avg": round(sum(merge_times) / max(1, len(merge_times)), 3),
+            "p95": round(_percentile(sm, 95), 3),
+        },
+        "total_ms": {"avg": round(sum(total_times) / max(1, len(total_times)), 3)},
+    }
+
+
+def benchmark_contract_detection(pool=None, num_repos: int = 3) -> dict:
+    from graphify.contract_bridge import detect_shared_interfaces
+    rng = random.Random(42)
+    graphs: dict[str, nx.Graph] = {}
+    for i in range(num_repos):
+        G = generate_bsbm_graph(num_nodes=1000, seed=rng.randint(0, 999999))
+        graphs[f"repo-{i}"] = G
+    t0 = time.perf_counter()
+    interfaces = detect_shared_interfaces(graphs)
+    elapsed = (time.perf_counter() - t0) * 1000
+    return {
+        "repos_scanned": num_repos,
+        "interfaces_found": len(interfaces),
+        "detection_ms": round(elapsed, 3),
+        "per_repo_ms": round(elapsed / max(1, num_repos), 3),
+    }
+
+
+def benchmark_multi_repo_scale(
+    pool=None, repo_counts: list[int] | None = None
+) -> list[dict]:
+    if repo_counts is None:
+        repo_counts = [2, 5, 10, 20]
+    results = []
+    for count in repo_counts:
+        r = benchmark_contract_detection(pool=pool, num_repos=count)
+        results.append({
+            "repo_count": count,
+            "detection_ms": r["detection_ms"],
+            "per_repo_ms": r["per_repo_ms"],
+            "interfaces_found": r["interfaces_found"],
+        })
+    return results

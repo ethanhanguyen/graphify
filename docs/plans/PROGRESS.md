@@ -17,7 +17,7 @@
 | 7 | pr-7 | B | ✅ Done | 2026-04-29 | 2026-04-29 | c7c8768 | graphify-out/benchmarks/phase-7-benchmark.json | — |
 | 8 | pr-8 | B | ✅ Done | 2026-04-29 | 2026-04-29 | 58d68f6 | graphify-out/benchmarks/phase-8-benchmark.json | — |
 | 9 | pr-9 | B | ✅ Done | 2026-04-29 | 2026-04-29 | 862836a | graphify-out/benchmarks/phase-9-benchmark.json | — |
-| 10 | pr-10 | B | ⬜ Not started | — | — | — | — | — |
+| 10 | pr-10 | B | ✅ Done | 2026-04-29 | 2026-04-29 | 719e839 | graphify-out/benchmarks/phase-10-benchmark.json | — |
 
 **Legend:** ⬜ Not started | 🔄 In progress | ✅ Done | ❌ Blocked
 
@@ -25,10 +25,10 @@
 
 | Phase | QPS (50K) | p95 ms (50K) | Mem MB | Delta QPS | Key Feature |
 |-------|-----------|-------------|--------|-----------|-------------|
-| 1-baseline | — | — | — | — | baseline (bench runner didn't exist yet) |
-| 2-indexing | — | — | — | — | indexes (bench runner didn't exist yet) |
 | 3-queryplan | 39,630 | 0.05 | 53.59 | — | Planner + Cache + Matviews |
 | 4-approximate | 48,759 | 0.03 | 55.72 | — | Bloom filter + Sampling + Embeddings |
+| 9-skills | — | — | — | — | Agent skill injection pipeline |
+| 10-multi-repo | 40,090 | 0.04 | — | — | Registry + Lazy Pool + Contract Bridge |
 
 > **Note:** Phases 1-2 were implemented before `run_full_benchmark` existed. QPS values are from the 50K synthetic benchmark tier (BSBM-generated graph), not from the actual repo graph. Values vary between runs due to host load; delta comparisons are meaningful only within the same session.
 
@@ -126,3 +126,5 @@ python -m graphify benchmark --seed 42 --phase N
 | pr-6 | 474a400 | `feat(phase-9): call resolution engine (6-stage DAG + MRO walk)` |
 | pr-7 | c7c8768 | `feat(phase-10): process tracing + change impact analysis (PR 7)` |
 | pr-8 | 58d68f6 | `feat(phase-11): hybrid search (BM25 + semantic + RRF)` |
+| pr-9 | 862836a | `feat(phase-12): agent skill injection pipeline (5 skills + MCP tools + benchmarks)` |
+| pr-10 | 719e839 | `feat(phase-13): multi-repo groups (registry + lazy pool + contract bridge)` |
