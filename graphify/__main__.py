@@ -1006,6 +1006,9 @@ def main() -> None:
         print("    --dfs                   use depth-first instead of breadth-first")
         print("    --budget N              cap output at N tokens (default 2000)")
         print("    --graph <path>          path to graph.json (default graphify-out/graph.json)")
+        print("  build <extraction.json>  build a graph from an extraction JSON file")
+        print("    --materialize R1,R2     precompute transitive closures for relation types")
+        print("    --out <path>            output path (default: graphify-out/graph.json)")
         print("  save-result             save a Q&A result to graphify-out/memory/ for graph feedback loop")
         print("    --question Q            the question asked")
         print("    --answer A              the answer to save")
@@ -1013,7 +1016,7 @@ def main() -> None:
         print("    --nodes N1 N2 ...       source node labels cited in the answer")
         print("    --memory-dir DIR        memory directory (default: graphify-out/memory)")
         print("  check-update <path>     check needs_update flag and notify if semantic re-extraction is pending (cron-safe)")
-        print("  benchmark [graph.json]  measure token reduction vs naive full-corpus approach")
+        print("  benchmark [--graph PATH] [--output PATH] [--seed N] [--compare PATH] [--scale huge]  run full benchmark suite")
         print("  hook install            install post-commit/post-checkout git hooks (all platforms)")
         print("  hook uninstall          remove git hooks")
         print("  hook status             check if git hooks are installed")
@@ -1434,6 +1437,46 @@ def main() -> None:
             print("Nothing to update or rebuild failed — check output above.", file=sys.stderr)
             sys.exit(1)
 
+    elif cmd == "build":
+        if len(sys.argv) < 3:
+            print("Usage: graphify build <extraction.json> [--materialize R1,R2] [--out graph.json]", file=sys.stderr)
+            sys.exit(1)
+        from graphify.build import build_from_json
+        from graphify.export import to_json
+        from graphify.cluster import cluster
+        extraction_path = Path(sys.argv[2])
+        if not extraction_path.exists():
+            print(f"error: extraction file not found: {extraction_path}", file=sys.stderr)
+            sys.exit(1)
+        materialize: list[str] | None = None
+        out_path = Path("graphify-out/graph.json")
+        args = sys.argv[3:]
+        i = 0
+        while i < len(args):
+            if args[i] == "--materialize" and i + 1 < len(args):
+                materialize = [s.strip() for s in args[i + 1].split(",") if s.strip()]
+                i += 2
+            elif args[i].startswith("--materialize="):
+                materialize = [s.strip() for s in args[i].split("=", 1)[1].split(",") if s.strip()]
+                i += 1
+            elif args[i] == "--out" and i + 1 < len(args):
+                out_path = Path(args[i + 1])
+                i += 2
+            elif args[i].startswith("--out="):
+                out_path = Path(args[i].split("=", 1)[1])
+                i += 1
+            else:
+                i += 1
+        data = json.loads(extraction_path.read_text(encoding="utf-8"))
+        G = build_from_json(data, materialize=materialize)
+        print(f"Graph built: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+        if materialize:
+            print(f"  Materialized views for: {', '.join(materialize)} → graphify-out/matviews/")
+        communities = cluster(G)
+        to_json(G, communities, str(out_path))
+        print(f"  Saved to: {out_path}")
+        print(f"  Communities: {len(communities)}")
+
     elif cmd == "check-update":
         if len(sys.argv) < 3:
             print("Usage: graphify check-update <path>", file=sys.stderr)
@@ -1502,19 +1545,70 @@ def main() -> None:
         print(local_path)
 
     elif cmd == "benchmark":
-        from graphify.benchmark import run_benchmark, print_benchmark
-        graph_path = sys.argv[2] if len(sys.argv) > 2 else "graphify-out/graph.json"
-        # Try to load corpus_words from detect output
-        corpus_words = None
-        detect_path = Path(".graphify_detect.json")
-        if detect_path.exists():
+        from graphify.benchmark import run_full_benchmark
+        graph_path = "graphify-out/graph.json"
+        output_path = "graphify-out/benchmark.json"
+        prev_path: str | None = None
+        seed = 42
+        scale: str | None = None
+        args = sys.argv[2:]
+        if "--help" in args or "-h" in args:
+            print("Usage: graphify benchmark [--graph PATH] [--output PATH] [--seed N] [--compare PATH] [--scale huge]")
+            print()
+            print("Options:")
+            print("  --graph PATH     path to graph.json (default: graphify-out/graph.json)")
+            print("  --output PATH    output path for benchmark.json (default: graphify-out/benchmark.json)")
+            print("  --seed N         random seed for reproducibility (default: 42)")
+            print("  --compare PATH   previous benchmark.json to diff against, writes progressive.json")
+            print("  --scale huge     include 5M-node tier (default: skips it)")
+            return
+        i = 0
+        while i < len(args):
+            if args[i] == "--graph" and i + 1 < len(args):
+                graph_path = args[i + 1]; i += 2
+            elif args[i] == "--output" and i + 1 < len(args):
+                output_path = args[i + 1]; i += 2
+            elif args[i] == "--seed" and i + 1 < len(args):
+                try:
+                    seed = int(args[i + 1])
+                except ValueError:
+                    print(f"error: --seed must be an integer", file=sys.stderr)
+                    sys.exit(1)
+                i += 2
+            elif args[i] == "--compare" and i + 1 < len(args):
+                prev_path = args[i + 1]; i += 2
+            elif args[i] == "--scale" and i + 1 < len(args):
+                scale = args[i + 1]; i += 2
+            else:
+                # legacy: positional arg is graph path
+                if not args[i].startswith("--"):
+                    graph_path = args[i]; i += 1
+                else:
+                    i += 1
+
+        gp = Path(graph_path).resolve()
+        if not gp.exists():
+            print(f"error: graph file not found: {gp}", file=sys.stderr)
+            print(f"Generate a BSBM synthetic graph instead: graphify benchmark --graph none", file=sys.stderr)
+            sys.exit(1)
+
+        try:
+            raw_data = json.loads(gp.read_text(encoding="utf-8"))
             try:
-                detect_data = json.loads(detect_path.read_text(encoding="utf-8"))
-                corpus_words = detect_data.get("total_words")
-            except Exception:
-                pass
-        result = run_benchmark(graph_path, corpus_words=corpus_words)
-        print_benchmark(result)
+                G = json_graph.node_link_graph(raw_data, edges="links")
+            except TypeError:
+                G = json_graph.node_link_graph(raw_data)
+        except (json.JSONDecodeError, FileNotFoundError) as exc:
+            print(f"error: could not load graph: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        run_full_benchmark(
+            G,
+            output_path=output_path,
+            seed=seed,
+            prev_benchmark_path=prev_path,
+            scale=scale,
+        )
     else:
         print(f"error: unknown command '{cmd}'", file=sys.stderr)
         print("Run 'graphify --help' for usage.", file=sys.stderr)

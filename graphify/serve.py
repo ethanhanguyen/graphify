@@ -6,6 +6,9 @@ from pathlib import Path
 import networkx as nx
 from networkx.readwrite import json_graph
 from graphify.security import sanitize_label
+from graphify.query_planner import select_start_nodes_by_degree, order_frontier_by_confidence
+from graphify.query_cache import cache_key, get_cached_query, set_cached_query
+from graphify.matviews import check_materialized_path
 
 
 def _load_graph(graph_path: str) -> nx.Graph:
@@ -46,8 +49,26 @@ def _strip_diacritics(text: str) -> str:
 
 
 def _score_nodes(G: nx.Graph, terms: list[str]) -> list[tuple[float, str]]:
+    indexes = G.graph.get("indexes", {}) if hasattr(G, "graph") else {}
+    label_index = indexes.get("label_index", {})
     scored = []
     norm_terms = [_strip_diacritics(t).lower() for t in terms]
+    if label_index:
+        seen: set[str] = set()
+        for term in norm_terms:
+            for length in range(min(3, len(term)), 0, -1):
+                prefix = term[:length]
+                for nid in label_index.get(prefix, []):
+                    if nid in seen:
+                        continue
+                    seen.add(nid)
+                    data = G.nodes[nid]
+                    norm_label = data.get("norm_label") or _strip_diacritics(data.get("label") or "").lower()
+                    source = (data.get("source_file") or "").lower()
+                    s = sum(1 for t in norm_terms if t in norm_label) + sum(0.5 for t in norm_terms if t in source)
+                    if s > 0:
+                        scored.append((s, nid))
+        return sorted(scored, reverse=True)
     for nid, data in G.nodes(data=True):
         norm_label = data.get("norm_label") or _strip_diacritics(data.get("label") or "").lower()
         source = (data.get("source_file") or "").lower()
@@ -73,6 +94,25 @@ def _bfs(G: nx.Graph, start_nodes: list[str], depth: int) -> tuple[set[str], lis
     return visited, edges_seen
 
 
+def _bfs_planned(
+    G: nx.Graph, start_node: str, depth: int, preference: str = "extracted"
+) -> tuple[set[str], list[tuple]]:
+    """BFS with planner: reorder frontier at each hop by confidence and degree."""
+    visited: set[str] = {start_node}
+    frontier = [start_node]
+    edges_seen: list[tuple] = []
+    for _ in range(depth):
+        next_frontier: list[str] = []
+        for n in frontier:
+            for neighbor in G.neighbors(n):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    next_frontier.append(neighbor)
+                    edges_seen.append((n, neighbor))
+        frontier = order_frontier_by_confidence(G, next_frontier, preference)
+    return visited, edges_seen
+
+
 def _dfs(G: nx.Graph, start_nodes: list[str], depth: int) -> tuple[set[str], list[tuple]]:
     visited: set[str] = set()
     edges_seen: list[tuple] = []
@@ -87,6 +127,162 @@ def _dfs(G: nx.Graph, start_nodes: list[str], depth: int) -> tuple[set[str], lis
                 stack.append((neighbor, d + 1))
                 edges_seen.append((node, neighbor))
     return visited, edges_seen
+
+
+def _bidirectional_shortest_path(
+    G: nx.Graph, src: str, tgt: str, max_hops: int = 20
+) -> tuple[list[str], float]:
+    """BFS from both src and tgt simultaneously. Returns (path_nodes, path_length).
+
+    Uses edge relation index if available for faster neighbor access.
+    """
+    if src == tgt:
+        return [src], 0.0
+    if src not in G or tgt not in G:
+        return [], float("inf")
+    f_parent: dict[str, str | None] = {src: None}
+    b_parent: dict[str, str | None] = {tgt: None}
+    f_frontier = {src}
+    b_frontier = {tgt}
+    f_dist: dict[str, float] = {src: 0}
+    b_dist: dict[str, float] = {tgt: 0}
+    mid = None
+    for _ in range(max_hops):
+        nf: set[str] = set()
+        for n in f_frontier:
+            dist = f_dist[n] + 1
+            for nb in G.neighbors(n):
+                if nb in f_parent:
+                    continue
+                f_parent[nb] = n
+                f_dist[nb] = dist
+                nf.add(nb)
+                if nb in b_parent:
+                    mid = nb
+                    break
+            if mid:
+                break
+        if mid:
+            break
+        f_frontier = nf
+        nb_set: set[str] = set()
+        for n in b_frontier:
+            dist = b_dist[n] + 1
+            for nb in G.neighbors(n):
+                if nb in b_parent:
+                    continue
+                b_parent[nb] = n
+                b_dist[nb] = dist
+                nb_set.add(nb)
+                if nb in f_parent:
+                    mid = nb
+                    break
+            if mid:
+                break
+        if mid:
+            break
+        b_frontier = nb_set
+        if not f_frontier or not b_frontier:
+            break
+    if mid is None:
+        return [], float("inf")
+    path: list[str] = []
+    cur = mid
+    while cur is not None:
+        path.append(cur)
+        cur = f_parent[cur]
+    path.reverse()
+    cur = b_parent[mid]
+    while cur is not None:
+        path.append(cur)
+        cur = b_parent[cur]
+    length = float(len(path) - 1)
+    return path, length
+
+
+def _dijkstra_shortest_path(
+    G: nx.Graph, src: str, tgt: str
+) -> tuple[list[str], float]:
+    """Uses edge['weight'] field. Returns (path, total_weight)."""
+    import heapq
+    if src == tgt:
+        return [src], 0.0
+    if src not in G or tgt not in G:
+        return [], float("inf")
+    dist: dict[str, float] = {src: 0}
+    parent: dict[str, str | None] = {src: None}
+    pq = [(0.0, src)]
+    while pq:
+        d, u = heapq.heappop(pq)
+        if d > dist.get(u, float("inf")):
+            continue
+        if u == tgt:
+            break
+        for v in G.neighbors(u):
+            w = G.edges[u, v].get("weight", 1.0)
+            nd = d + w
+            if nd < dist.get(v, float("inf")):
+                dist[v] = nd
+                parent[v] = u
+                heapq.heappush(pq, (nd, v))
+    if tgt not in parent:
+        return [], float("inf")
+    path: list[str] = []
+    cur: str | None = tgt
+    while cur is not None:
+        path.append(cur)
+        cur = parent[cur]
+    path.reverse()
+    return path, dist[tgt]
+
+
+def _astar_search(
+    G: nx.Graph, src: str, tgt: str, communities: dict[int, list[str]], max_hops: int = 20
+) -> list[str]:
+    """A* with heuristic h(n) = 1 if different community else 0.5."""
+    import heapq
+    if src == tgt:
+        return [src]
+    if src not in G or tgt not in G:
+        return []
+    node_comm: dict[str, int] = {}
+    for cid, node_list in communities.items():
+        for nid in node_list:
+            node_comm[nid] = cid
+    tgt_c = node_comm.get(tgt)
+
+    def h(n: str) -> float:
+        c = node_comm.get(n)
+        if tgt_c is not None and c is not None:
+            return 0.5 if c == tgt_c else 1.0
+        return 0.5
+
+    parent: dict[str, str | None] = {src: None}
+    g: dict[str, float] = {src: 0}
+    open_set = [(h(src), 0, src)]
+    while open_set:
+        _, cost, u = heapq.heappop(open_set)
+        if cost > g.get(u, float("inf")):
+            continue
+        if u == tgt:
+            break
+        if cost >= max_hops:
+            continue
+        for v in G.neighbors(u):
+            ng = cost + 1
+            if ng < g.get(v, float("inf")):
+                g[v] = ng
+                parent[v] = u
+                heapq.heappush(open_set, (ng + h(v), ng, v))
+    if tgt not in parent:
+        return []
+    path: list[str] = []
+    cur: str | None = tgt
+    while cur is not None:
+        path.append(cur)
+        cur = parent[cur]
+    path.reverse()
+    return path
 
 
 def _subgraph_to_text(G: nx.Graph, nodes: set[str], edges: list[tuple], token_budget: int = 2000) -> str:
@@ -171,10 +367,14 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
                     "type": "object",
                     "properties": {
                         "question": {"type": "string", "description": "Natural language question or keyword search"},
-                        "mode": {"type": "string", "enum": ["bfs", "dfs"], "default": "bfs",
-                                 "description": "bfs=broad context, dfs=trace a specific path"},
+                         "mode": {"type": "string", "enum": ["bfs", "dfs", "bidirectional", "astar"], "default": "bfs",
+                                  "description": "bfs=broad context, dfs=trace a specific path, bidirectional=path finding, astar=community-aware path"},
                         "depth": {"type": "integer", "default": 3, "description": "Traversal depth (1-6)"},
                         "token_budget": {"type": "integer", "default": 2000, "description": "Max output tokens"},
+                        "use_cache": {"type": "boolean", "default": True, "description": "Use query result cache"},
+                        "prefer": {"type": "string", "enum": ["extracted", "inferred", "all"], "default": "extracted",
+                                   "description": "Edge confidence preference for traversal order"},
+                        "materialize": {"type": "boolean", "default": False, "description": "Use planned BFS with confidence ordering"},
                     },
                     "required": ["question"],
                 },
@@ -228,6 +428,9 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
                         "source": {"type": "string", "description": "Source concept label or keyword"},
                         "target": {"type": "string", "description": "Target concept label or keyword"},
                         "max_hops": {"type": "integer", "default": 8, "description": "Maximum hops to consider"},
+                        "weighted": {"type": "boolean", "default": False, "description": "Use Dijkstra with edge weights"},
+                        "mode": {"type": "string", "enum": ["default", "bidirectional"], "default": "default",
+                                 "description": "default=nx shortest_path, bidirectional=simultaneous BFS from both ends"},
                     },
                     "required": ["source", "target"],
                 },
@@ -239,14 +442,79 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         mode = arguments.get("mode", "bfs")
         depth = min(int(arguments.get("depth", 3)), 6)
         budget = int(arguments.get("token_budget", 2000))
+        use_cache = arguments.get("use_cache", True)
+        prefer = arguments.get("prefer", "extracted")
+        materialize = arguments.get("materialize", False)
+
+        if use_cache:
+            cache_dir = Path("graphify-out/query_cache")
+            key = cache_key(question, mode, depth, budget)
+            cached = get_cached_query(cache_dir, key)
+            if cached is not None:
+                return cached
+
         terms = [t.lower() for t in question.split() if len(t) > 2]
         scored = _score_nodes(G, terms)
-        start_nodes = [nid for _, nid in scored[:3]]
-        if not start_nodes:
-            return "No matching nodes found."
-        nodes, edges = _dfs(G, start_nodes, depth) if mode == "dfs" else _bfs(G, start_nodes, depth)
-        header = f"Traversal: {mode.upper()} depth={depth} | Start: {[G.nodes[n].get('label', n) for n in start_nodes]} | {len(nodes)} nodes found\n\n"
-        return header + _subgraph_to_text(G, nodes, edges, budget)
+        if not scored:
+            result = "No matching nodes found."
+            if use_cache:
+                set_cached_query(Path("graphify-out/query_cache"),
+                                 cache_key(question, mode, depth, budget), result)
+            return result
+
+        candidate_ids = [nid for _, nid in scored[:5]]
+        start_node = select_start_nodes_by_degree(G, candidate_ids)
+        start_nodes = [start_node]
+
+        if mode == "bidirectional" and len(candidate_ids) >= 2:
+            path, length = _bidirectional_shortest_path(G, candidate_ids[0], candidate_ids[1])
+            if not path:
+                result = f"No bidirectional path found between '{G.nodes[candidate_ids[0]].get('label', candidate_ids[0])}' and '{G.nodes[candidate_ids[1]].get('label', candidate_ids[1])}'."
+                if use_cache:
+                    set_cached_query(Path("graphify-out/query_cache"),
+                                     cache_key(question, mode, depth, budget), result)
+                return result
+            nodes = set(path)
+            edges = [(path[i], path[i + 1]) for i in range(len(path) - 1)]
+            header = f"Bidirectional path ({int(length)} hops):\n"
+            result = header + _subgraph_to_text(G, nodes, edges, budget)
+            if use_cache:
+                set_cached_query(Path("graphify-out/query_cache"),
+                                 cache_key(question, mode, depth, budget), result)
+            return result
+
+        if mode == "astar" and len(candidate_ids) >= 2:
+            path = _astar_search(G, candidate_ids[0], candidate_ids[1], communities)
+            if not path:
+                result = f"No A* path found between '{G.nodes[candidate_ids[0]].get('label', candidate_ids[0])}' and '{G.nodes[candidate_ids[1]].get('label', candidate_ids[1])}'."
+                if use_cache:
+                    set_cached_query(Path("graphify-out/query_cache"),
+                                     cache_key(question, mode, depth, budget), result)
+                return result
+            nodes = set(path)
+            edges = [(path[i], path[i + 1]) for i in range(len(path) - 1)]
+            header = f"A* path ({len(path) - 1} hops):\n"
+            result = header + _subgraph_to_text(G, nodes, edges, budget)
+            if use_cache:
+                set_cached_query(Path("graphify-out/query_cache"),
+                                 cache_key(question, mode, depth, budget), result)
+            return result
+
+        if mode == "dfs":
+            nodes, edges = _dfs(G, start_nodes, depth)
+        elif materialize and mode == "bfs":
+            nodes, edges = _bfs_planned(G, start_node, depth, prefer)
+        elif prefer != "extracted" and mode == "bfs":
+            nodes, edges = _bfs_planned(G, start_node, depth, prefer)
+        else:
+            nodes, edges = _bfs(G, start_nodes, depth)
+
+        header = f"Traversal: {mode.upper()} depth={depth} | Start: {[G.nodes[n].get('label', n) for n in [start_node]]} | {len(nodes)} nodes found\n\n"
+        result = header + _subgraph_to_text(G, nodes, edges, budget)
+        if use_cache:
+            set_cached_query(Path("graphify-out/query_cache"),
+                             cache_key(question, mode, depth, budget), result)
+        return result
 
     def _tool_get_node(arguments: dict) -> str:
         label = arguments["label"].lower()
@@ -319,6 +587,51 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
             return f"No node matching target '{arguments['target']}' found."
         src_nid, tgt_nid = src_scored[0][1], tgt_scored[0][1]
         max_hops = int(arguments.get("max_hops", 8))
+        path_mode = arguments.get("mode", "default")
+        weighted = arguments.get("weighted", False)
+
+        matviews_dir = Path("graphify-out/matviews")
+        if matviews_dir.exists():
+            for rel_type in ("calls", "imports"):
+                hop_dist = check_materialized_path(G, src_nid, tgt_nid, rel_type, matviews_dir)
+                if hop_dist is not None and hop_dist <= max_hops:
+                    return f"Materialized path ({rel_type}, {hop_dist} hops): {G.nodes[src_nid].get('label', src_nid)} --{rel_type}--> {G.nodes[tgt_nid].get('label', tgt_nid)}"
+
+        if weighted:
+            path_nodes, total_weight = _dijkstra_shortest_path(G, src_nid, tgt_nid)
+            if not path_nodes:
+                return f"No weighted path found between '{G.nodes[src_nid].get('label', src_nid)}' and '{G.nodes[tgt_nid].get('label', tgt_nid)}'."
+            hops = len(path_nodes) - 1
+            if hops > max_hops:
+                return f"Path exceeds max_hops={max_hops} ({hops} hops found)."
+            segments = []
+            for i in range(len(path_nodes) - 1):
+                u, v = path_nodes[i], path_nodes[i + 1]
+                edata = G.edges[u, v]
+                rel = edata.get("relation", "")
+                w = edata.get("weight", 1.0)
+                if i == 0:
+                    segments.append(G.nodes[u].get("label", u))
+                segments.append(f"--{rel}[w={w}]--> {G.nodes[v].get('label', v)}")
+            return f"Weighted shortest path ({hops} hops, total_weight={round(total_weight, 3)}):\n  " + " ".join(segments)
+
+        if path_mode == "bidirectional":
+            path_nodes, length = _bidirectional_shortest_path(G, src_nid, tgt_nid, max_hops)
+            if not path_nodes:
+                return f"No bidirectional path found between '{G.nodes[src_nid].get('label', src_nid)}' and '{G.nodes[tgt_nid].get('label', tgt_nid)}'."
+            hops = len(path_nodes) - 1
+            segments = []
+            for i in range(len(path_nodes) - 1):
+                u, v = path_nodes[i], path_nodes[i + 1]
+                edata = G.edges[u, v]
+                rel = edata.get("relation", "")
+                conf = edata.get("confidence", "")
+                conf_str = f" [{conf}]" if conf else ""
+                if i == 0:
+                    segments.append(G.nodes[u].get("label", u))
+                segments.append(f"--{rel}{conf_str}--> {G.nodes[v].get('label', v)}")
+            return f"Bidirectional shortest path ({hops} hops):\n  " + " ".join(segments)
+
         try:
             path_nodes = nx.shortest_path(G, src_nid, tgt_nid)
         except (nx.NetworkXNoPath, nx.NodeNotFound):

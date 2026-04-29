@@ -39,7 +39,8 @@ def _normalize_id(s: str) -> str:
     return cleaned.strip("_").lower()
 
 
-def build_from_json(extraction: dict, *, directed: bool = False) -> nx.Graph:
+def build_from_json(extraction: dict, *, directed: bool = False, build_indexes: bool = True,
+                    materialize: list[str] | None = None) -> nx.Graph:
     """Build a NetworkX graph from an extraction dict.
 
     directed=True produces a DiGraph that preserves edge direction (source→target).
@@ -103,10 +104,19 @@ def build_from_json(extraction: dict, *, directed: bool = False) -> nx.Graph:
     hyperedges = extraction.get("hyperedges", [])
     if hyperedges:
         G.graph["hyperedges"] = hyperedges
+    if build_indexes:
+        from .index import build_indexes as _build_indexes
+        G.graph["indexes"] = _build_indexes(G)
+    if materialize:
+        from .matviews import compute_transitive_closure, write_materialized_view
+        matviews_dir = Path("graphify-out/matviews")
+        for rel_type in materialize:
+            closure = compute_transitive_closure(G, rel_type)
+            write_materialized_view(closure, rel_type, matviews_dir)
     return G
 
 
-def build(extractions: list[dict], *, directed: bool = False) -> nx.Graph:
+def build(extractions: list[dict], *, directed: bool = False, build_indexes: bool = True) -> nx.Graph:
     """Merge multiple extraction results into one graph.
 
     directed=True produces a DiGraph that preserves edge direction (source→target).
@@ -124,7 +134,7 @@ def build(extractions: list[dict], *, directed: bool = False) -> nx.Graph:
         combined["hyperedges"].extend(ext.get("hyperedges", []))
         combined["input_tokens"] += ext.get("input_tokens", 0)
         combined["output_tokens"] += ext.get("output_tokens", 0)
-    return build_from_json(combined, directed=directed)
+    return build_from_json(combined, directed=directed, build_indexes=build_indexes)
 
 
 def _norm_label(label: str) -> str:
@@ -184,6 +194,7 @@ def build_merge(
     prune_sources: list[str] | None = None,
     *,
     directed: bool = False,
+    build_indexes: bool = True,
 ) -> nx.Graph:
     """Load existing graph.json, merge new chunks into it, and save back.
 
@@ -209,7 +220,7 @@ def build_merge(
         base = []
 
     all_chunks = base + list(new_chunks)
-    G = build(all_chunks, directed=directed)
+    G = build(all_chunks, directed=directed, build_indexes=build_indexes)
 
     # Prune nodes from deleted source files
     if prune_sources:
