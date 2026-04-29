@@ -16,7 +16,7 @@
 | 6 | pr-6 | B | ✅ Done | 2026-04-29 | 2026-04-29 | 474a400 | graphify-out/benchmarks/phase-6-benchmark.json | — |
 | 7 | pr-7 | B | ✅ Done | 2026-04-29 | 2026-04-29 | c7c8768 | graphify-out/benchmarks/phase-7-benchmark.json | — |
 | 8 | pr-8 | B | ✅ Done | 2026-04-29 | 2026-04-29 | 58d68f6 | graphify-out/benchmarks/phase-8-benchmark.json | — |
-| 9 | pr-9 | B | ✅ Done | 2026-04-29 | 2026-04-29 | bd90d7b | graphify-out/benchmarks/phase-9-benchmark.json | — |
+| 9 | pr-9 | B | ✅ Done | 2026-04-29 | 2026-04-29 | 862836a | graphify-out/benchmarks/phase-9-benchmark.json | — |
 | 10 | pr-10 | B | ⬜ Not started | — | — | — | — | — |
 
 **Legend:** ⬜ Not started | 🔄 In progress | ✅ Done | ❌ Blocked
