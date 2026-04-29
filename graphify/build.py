@@ -53,7 +53,8 @@ def _validate_typed_nodes(nodes: list[dict]) -> list[str]:
 
 def build_from_json(extraction: dict, *, directed: bool = False, build_indexes: bool = True,
                     materialize: list[str] | None = None,
-                    trace_processes: bool = False) -> nx.Graph:
+                    trace_processes: bool = False,
+                    generate_embeddings: bool = False) -> nx.Graph:
     """Build a NetworkX graph from an extraction dict.
 
     directed=True produces a DiGraph that preserves edge direction (source→target).
@@ -140,11 +141,15 @@ def build_from_json(extraction: dict, *, directed: bool = False, build_indexes: 
                     relation="step_in_process", confidence="INFERRED",
                     process_id=proc.id, step_index=i,
                 )
+    if generate_embeddings:
+        from .search.embeddings import generate_embeddings as _gen_emb, save_embeddings as _save_emb
+        emb = _gen_emb(G)
+        _save_emb(emb, Path("graphify-out/embeddings"))
     return G
 
 
 def build(extractions: list[dict], *, directed: bool = False, build_indexes: bool = True,
-          trace_processes: bool = False) -> nx.Graph:
+          trace_processes: bool = False, generate_embeddings: bool = False) -> nx.Graph:
     """Merge multiple extraction results into one graph.
 
     directed=True produces a DiGraph that preserves edge direction (source→target).
@@ -163,7 +168,7 @@ def build(extractions: list[dict], *, directed: bool = False, build_indexes: boo
         combined["input_tokens"] += ext.get("input_tokens", 0)
         combined["output_tokens"] += ext.get("output_tokens", 0)
     return build_from_json(combined, directed=directed, build_indexes=build_indexes,
-                           trace_processes=trace_processes)
+                           trace_processes=trace_processes, generate_embeddings=generate_embeddings)
 
 
 def _norm_label(label: str) -> str:

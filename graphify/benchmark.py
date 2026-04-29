@@ -1,6 +1,7 @@
 """Benchmark suite - token reduction, query latency, pathfinding, memory, and scale benchmarks."""
 from __future__ import annotations
 import json
+import math
 import os
 import random
 import sys
@@ -956,3 +957,188 @@ def benchmark_change_impact(
         "avg_affected_nodes": round(total_affected_nodes / n, 2),
         "avg_affected_processes": round(total_affected_processes / n, 2),
     }
+
+
+_Q_SEARCH_SAMPLES = [
+    "authentication login",
+    "user management service",
+    "payment processing handler",
+    "email notification sender",
+    "error handling middleware",
+    "database migration script",
+    "form validation component",
+    "file upload service",
+    "cache invalidation strategy",
+    "API rate limiter",
+    "logging pipeline",
+    "background job scheduler",
+    "configuration loader",
+    "session management",
+    "data export utility",
+]
+
+
+def benchmark_search_latency(
+    G: nx.Graph,
+    bm25_index,
+    embeddings: dict[str, list[float]],
+    num_queries: int = 50,
+    seed: int = 42,
+) -> dict:
+    from graphify.search.bm25 import BM25Index
+    from graphify.search.embeddings import search_by_embedding
+    from graphify.search.hybrid import hybrid_search
+
+    rng = random.Random(seed)
+    queries = rng.sample(_Q_SEARCH_SAMPLES, min(num_queries, len(_Q_SEARCH_SAMPLES))) if num_queries > 0 else []
+
+    bm25_times: list[float] = []
+    sem_times: list[float] = []
+    hybrid_times: list[float] = []
+
+    for q in queries:
+        t0 = time.perf_counter()
+        bm25_index.search(q, top_k=20)
+        bm25_times.append((time.perf_counter() - t0) * 1000)
+
+        t0 = time.perf_counter()
+        search_by_embedding(q, embeddings, top_k=20)
+        sem_times.append((time.perf_counter() - t0) * 1000)
+
+        t0 = time.perf_counter()
+        hybrid_search(G, q, bm25_index, embeddings, processes=None, top_k=20)
+        hybrid_times.append((time.perf_counter() - t0) * 1000)
+
+    def _summary(times: list[float]) -> dict:
+        if not times:
+            return {"avg": 0, "p95": 0}
+        s = sorted(times)
+        return {"avg": round(sum(times) / len(times), 3), "p95": round(_percentile(s, 95), 3)}
+
+    rrf_overhead = (
+        round(sum(hybrid_times) / max(1, len(hybrid_times)) - (sum(bm25_times) / max(1, len(bm25_times))), 3)
+        if bm25_times else 0
+    )
+
+    return {
+        "bm25_ms": _summary(bm25_times),
+        "semantic_ms": _summary(sem_times),
+        "hybrid_ms": _summary(hybrid_times),
+        "rrf_overhead_ms": {"avg": max(0, rrf_overhead)},
+    }
+
+
+def benchmark_search_overlap(
+    G: nx.Graph,
+    bm25_index,
+    embeddings: dict[str, list[float]],
+    num_queries: int = 50,
+    seed: int = 42,
+    k: int = 20,
+) -> dict:
+    from graphify.search.embeddings import search_by_embedding
+    from graphify.search.fusion import reciprocal_rank_fusion
+
+    rng = random.Random(seed)
+    queries = rng.sample(_Q_SEARCH_SAMPLES, min(num_queries, len(_Q_SEARCH_SAMPLES))) if num_queries > 0 else []
+
+    overlap_5: list[float] = []
+    overlap_10: list[float] = []
+    overlap_20: list[float] = []
+    rrf_boosts: list[float] = []
+
+    for q in queries:
+        bm25_res = [doc for doc, _ in bm25_index.search(q, top_k=k)]
+        sem_res = [doc for doc, _ in search_by_embedding(q, embeddings, top_k=k)]
+        merged = reciprocal_rank_fusion(
+            [[(d, 0) for d in bm25_res], [(d, 0) for d in sem_res]], k=60
+        )
+        merged_ids = set(doc for doc, _ in merged[:k])
+
+        bm25_set = set(bm25_res)
+        sem_set = set(sem_res)
+
+        def _overlap(a, b, topn):
+            a_n = set(list(a)[:topn])
+            b_n = set(list(b)[:topn])
+            inter = a_n & b_n
+            return len(inter) / topn if topn > 0 else 0.0
+
+        overlap_5.append(_overlap(bm25_res, sem_res, 5))
+        overlap_10.append(_overlap(bm25_res, sem_res, 10))
+        overlap_20.append(_overlap(bm25_res, sem_res, 20))
+
+        rrf_boost = len(merged_ids - bm25_set - sem_set) / max(1, len(merged_ids)) if merged_ids else 0.0
+        rrf_boosts.append(rrf_boost)
+
+    def _avg(xs):
+        return round(sum(xs) / max(1, len(xs)), 4)
+
+    return {
+        "overlap_at_5": _avg(overlap_5),
+        "overlap_at_10": _avg(overlap_10),
+        "overlap_at_20": _avg(overlap_20),
+        "rrf_boost_pct": round(_avg(rrf_boosts) * 100, 2),
+    }
+
+
+def benchmark_search_relevance(
+    G: nx.Graph,
+    bm25_index,
+    embeddings: dict[str, list[float]],
+    judgments: dict[str, set[str]],
+    ks: list[int] | None = None,
+) -> dict:
+    from graphify.search.embeddings import search_by_embedding
+    from graphify.search.hybrid import hybrid_search
+
+    if ks is None:
+        ks = [5, 10, 20]
+
+    results: dict = {"bm25": {}, "semantic": {}, "hybrid": {}}
+
+    for k_val in ks:
+        for method_name, fetch in [
+            ("bm25", lambda q: bm25_index.search(q, top_k=k_val)),
+            ("semantic", lambda q: search_by_embedding(q, embeddings, top_k=k_val)),
+            ("hybrid", lambda q: hybrid_search(G, q, bm25_index, embeddings, processes=None, top_k=k_val)),
+        ]:
+            precisions: list[float] = []
+            recalls: list[float] = []
+            ndcgs: list[float] = []
+
+            for query_text, relevant in judgments.items():
+                if not relevant:
+                    continue
+                retrieved = [doc for doc, _ in fetch(query_text)[:k_val]]
+                retrieved_set = set(retrieved)
+                relevant_retrieved = retrieved_set & relevant
+
+                precision = len(relevant_retrieved) / k_val
+                recall = len(relevant_retrieved) / len(relevant)
+
+                dcg = sum(
+                    1 / (1 + math.log2(i + 1)) for i, doc in enumerate(retrieved, 1)
+                    if doc in relevant
+                )
+                idcg = sum(1 / (1 + math.log2(i + 1)) for i in range(1, min(k_val, len(relevant)) + 1))
+                ndcg = dcg / idcg if idcg > 0 else 0.0
+
+                precisions.append(precision)
+                recalls.append(recall)
+                ndcgs.append(ndcg)
+
+            k_str = str(k_val)
+            n = max(1, len(precisions))
+            results[method_name][k_str] = {
+                "precision": round(sum(precisions) / n, 4),
+                "recall": round(sum(recalls) / n, 4),
+                "ndcg": round(sum(ndcgs) / n, 4),
+            }
+
+    return results
+
+
+def load_relevance_judgments(path: str) -> dict[str, set[str]]:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    return {k: set(v) for k, v in data.items()}

@@ -10,6 +10,30 @@ from graphify.query_planner import select_start_nodes_by_degree, order_frontier_
 from graphify.query_cache import cache_key, get_cached_query, set_cached_query
 from graphify.matviews import check_materialized_path
 from graphify.approx import sample_subgraph, _should_skip_query, build_path_bloom_filter
+from graphify.search.bm25 import BM25Index
+from graphify.search.embeddings import generate_embeddings, load_embeddings, search_by_embedding
+from graphify.search.hybrid import hybrid_search
+
+_bm25_index: BM25Index | None = None
+_embeddings_cache: dict[str, list[float]] | None = None
+_embeddings_loaded: bool = False
+
+
+def _lazy_init_search(G) -> tuple[BM25Index, dict[str, list[float]]]:
+    global _bm25_index, _embeddings_cache, _embeddings_loaded
+    if _bm25_index is not None and _embeddings_loaded:
+        return _bm25_index, _embeddings_cache or {}
+    if _bm25_index is None:
+        _bm25_index = BM25Index()
+        _bm25_index.index_from_graph(G)
+    if not _embeddings_loaded:
+        emb_dir = Path("graphify-out/embeddings")
+        if emb_dir.exists():
+            _embeddings_cache = load_embeddings(emb_dir)
+        else:
+            _embeddings_cache = generate_embeddings(G)
+        _embeddings_loaded = True
+    return _bm25_index, _embeddings_cache or {}
 
 
 def _load_graph(graph_path: str) -> nx.Graph:
@@ -306,6 +330,33 @@ def _subgraph_to_text(G: nx.Graph, nodes: set[str], edges: list[tuple], token_bu
     return output
 
 
+def _hybrid_search_to_text(G: nx.Graph, results: list[tuple[str, float]], budget: int) -> str:
+    lines = [f"Hybrid search | {len(results)} results found", ""]
+    char_budget = budget * 3
+    for nid, score in results[:20]:
+        d = G.nodes.get(nid, {})
+        label = d.get("label", nid)
+        nt = d.get("node_type", d.get("file_type", ""))
+        src = d.get("source_file", "")
+        loc = d.get("source_location", "")
+        sig = d.get("signature", "")
+        doc = d.get("docstring", "")
+        parts = [f"NODE {sanitize_label(label)} [{nt}] score={round(score, 5)}"]
+        if src:
+            parts.append(f"src={src}")
+        if loc:
+            parts.append(f"loc={loc}")
+        if sig:
+            parts.append(f"sig={sig[:80]}")
+        if doc:
+            parts.append(f"doc={doc[:120]}")
+        lines.append(" ".join(parts))
+    output = "\n".join(lines)
+    if len(output) > char_budget:
+        output = output[:char_budget] + f"\n... (truncated to ~{budget} token budget)"
+    return output
+
+
 def _find_node(G: nx.Graph, label: str) -> list[str]:
     """Return node IDs whose label or ID matches the search term (diacritic-insensitive)."""
     term = _strip_diacritics(label).lower()
@@ -363,19 +414,37 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         return [
             types.Tool(
                 name="query_graph",
-                description="Search the knowledge graph using BFS or DFS. Returns relevant nodes and edges as text context.",
+                description="Search the knowledge graph using hybrid (BM25 + semantic + RRF), BFS, or DFS. Default: hybrid. Returns relevant nodes and edges as text context.",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "question": {"type": "string", "description": "Natural language question or keyword search"},
-                         "mode": {"type": "string", "enum": ["bfs", "dfs", "bidirectional", "astar"], "default": "bfs",
-                                  "description": "bfs=broad context, dfs=trace a specific path, bidirectional=path finding, astar=community-aware path"},
+                         "mode": {"type": "string", "enum": ["hybrid", "bfs", "dfs", "bidirectional", "astar"], "default": "hybrid",
+                                  "description": "hybrid=BM25+semantic+RRF (default), bfs=broad context, dfs=trace a specific path, bidirectional=path finding, astar=community-aware path"},
                         "depth": {"type": "integer", "default": 3, "description": "Traversal depth (1-6)"},
                         "token_budget": {"type": "integer", "default": 2000, "description": "Max output tokens"},
                         "use_cache": {"type": "boolean", "default": True, "description": "Use query result cache"},
                         "prefer": {"type": "string", "enum": ["extracted", "inferred", "all"], "default": "extracted",
                                    "description": "Edge confidence preference for traversal order"},
                         "materialize": {"type": "boolean", "default": False, "description": "Use planned BFS with confidence ordering"},
+                        "approximate": {"type": "boolean", "default": False, "description": "Query a sampled subgraph (~10x faster, ~90% accuracy)"},
+                        "sample_rate": {"type": "number", "default": 0.1, "description": "Fraction of graph to sample when approximate=True (0.01-1.0)"},
+                    },
+                    "required": ["question"],
+                },
+            ),
+            types.Tool(
+                name="query",
+                description="Alias for query_graph with hybrid search default. BM25 keyword + semantic vector + RRF fusion search.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string", "description": "Natural language question or keyword search"},
+                        "mode": {"type": "string", "enum": ["hybrid", "bfs", "dfs", "bidirectional", "astar"], "default": "hybrid",
+                                 "description": "Search mode. Default: hybrid (BM25 + semantic + RRF)"},
+                        "depth": {"type": "integer", "default": 3, "description": "Traversal depth (1-6, non-hybrid modes)"},
+                        "token_budget": {"type": "integer", "default": 2000, "description": "Max output tokens"},
+                        "use_cache": {"type": "boolean", "default": True, "description": "Use query result cache"},
                         "approximate": {"type": "boolean", "default": False, "description": "Query a sampled subgraph (~10x faster, ~90% accuracy)"},
                         "sample_rate": {"type": "number", "default": 0.1, "description": "Fraction of graph to sample when approximate=True (0.01-1.0)"},
                     },
@@ -480,7 +549,7 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
 
     def _tool_query_graph(arguments: dict) -> str:
         question = arguments["question"]
-        mode = arguments.get("mode", "bfs")
+        mode = arguments.get("mode", "hybrid")
         depth = min(int(arguments.get("depth", 3)), 6)
         budget = int(arguments.get("token_budget", 2000))
         use_cache = arguments.get("use_cache", True)
@@ -488,6 +557,26 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         materialize = arguments.get("materialize", False)
         approximate = arguments.get("approximate", False)
         sample_rate = float(arguments.get("sample_rate", 0.1))
+
+        if mode == "hybrid":
+            use_cache_b = arguments.get("use_cache", True)
+            cache_dir = Path("graphify-out/query_cache")
+            key = cache_key(question, mode, depth, budget)
+            if use_cache_b:
+                cached = get_cached_query(cache_dir, key)
+                if cached is not None:
+                    return cached
+            bm25, emb = _lazy_init_search(G)
+            results = hybrid_search(G, question, bm25, emb, processes=None, top_k=20)
+            if not results:
+                result = "No matching nodes found."
+                if use_cache_b:
+                    set_cached_query(cache_dir, key, result)
+                return result
+            result = _hybrid_search_to_text(G, results, budget)
+            if use_cache_b:
+                set_cached_query(cache_dir, key, result)
+            return result
 
         if approximate:
             cache_dir = Path("graphify-out/query_cache")
@@ -867,6 +956,7 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
 
     _handlers = {
         "query_graph": _tool_query_graph,
+        "query": _tool_query_graph,
         "get_node": _tool_get_node,
         "get_neighbors": _tool_get_neighbors,
         "get_community": _tool_get_community,

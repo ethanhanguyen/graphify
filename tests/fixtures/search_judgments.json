@@ -1,0 +1,7 @@
+{
+  "authentication login handler": ["n1", "n2"],
+  "user database operations": ["n3", "n4"],
+  "form validation component": ["n5"],
+  "email sending service": ["n6"],
+  "file upload handler": ["n7"]
+}
