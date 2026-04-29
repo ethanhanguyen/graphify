@@ -125,4 +125,4 @@ python -m graphify benchmark --seed 42 --phase N
 | pr-5 | 440578a | `feat(phase-8): typed code schema (17 node types, 21 edge types)` |
 | pr-6 | 474a400 | `feat(phase-9): call resolution engine (6-stage DAG + MRO walk)` |
 | pr-7 | c7c8768 | `feat(phase-10): process tracing + change impact analysis (PR 7)` |
-| pr-8 | 954deb6 | `feat(phase-11): hybrid search (BM25 + semantic + RRF)` |
+| pr-8 | 58d68f6 | `feat(phase-11): hybrid search (BM25 + semantic + RRF)` |
