@@ -1546,6 +1546,7 @@ def main() -> None:
 
     elif cmd == "benchmark":
         from graphify.benchmark import run_full_benchmark
+        from networkx.readwrite import json_graph
         graph_path = "graphify-out/graph.json"
         output_path = "graphify-out/benchmark.json"
         prev_path: str | None = None

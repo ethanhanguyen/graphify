@@ -25,9 +25,9 @@
 
 | Phase | QPS (50K) | p95 ms (50K) | Mem MB | Delta QPS | Key Feature |
 |-------|-----------|-------------|--------|-----------|-------------|
-| 1-baseline | — | — | — | — | — |
-| 2-indexing | — | — | — | — | — |
-| 3-queryplan | — | — | — | — | — |
+| 1-baseline | — | — | — | — | baseline (not yet benched) |
+| 2-indexing | — | — | — | — | indexes (not yet benched) |
+| 3-queryplan | 39,630 | 0.05 | 53.59 | — | Planner + Cache + Matviews |
 | 4-approximate | — | — | — | — | — |
 
 ## Accuracy Benchmarks
