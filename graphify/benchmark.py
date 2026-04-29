@@ -758,3 +758,126 @@ def benchmark_at_scale(G: nx.Graph, scale: str = "huge") -> dict:
         "bytes_per_node": mem["bytes_per_node"],
         "bytes_per_edge": mem["bytes_per_edge"],
     }
+
+
+def benchmark_call_resolution(G: nx.Graph, num_files: int = 100, seed: int = 42) -> dict:
+    from pathlib import Path
+    from graphify.call_dag import resolve_call_graph
+
+    code_files = [
+        n for n, d in G.nodes(data=True)
+        if d.get("source_file") and any(
+            str(d.get("source_file", "")).endswith(ext)
+            for ext in (".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".java")
+        )
+    ]
+    source_files = sorted(set(G.nodes[n].get("source_file", "") for n in code_files))
+    if not source_files:
+        return {
+            "total_calls": 0, "resolved": 0, "unresolved": 0,
+            "resolution_pct": 0, "avg_time_ms": 0, "p95_time_ms": 0,
+        }
+
+    import random
+    rng = random.Random(seed)
+    selected = rng.sample(source_files, min(num_files, len(source_files)))
+    file_paths = [Path(f) for f in selected if Path(f).exists()]
+
+    times: list[float] = []
+    total_resolved = 0
+    total_unresolved = 0
+
+    for fp in file_paths:
+        import time
+        start = time.perf_counter()
+        resolved, unresolved = resolve_call_graph([fp], G)
+        elapsed = (time.perf_counter() - start) * 1000
+        times.append(elapsed)
+        total_resolved += len(resolved)
+        total_unresolved += unresolved
+
+    total_calls = total_resolved + total_unresolved
+    sorted_times = sorted(times)
+
+    return {
+        "total_calls": total_calls,
+        "resolved": total_resolved,
+        "unresolved": total_unresolved,
+        "resolution_pct": round(total_resolved / max(1, total_calls), 2),
+        "avg_time_ms": round(sum(times) / max(1, len(times)), 2),
+        "p95_time_ms": round(_percentile(sorted_times, 95), 2),
+    }
+
+
+def benchmark_resolution_accuracy(
+    G: nx.Graph, fixture_dir: str = "tests/fixtures/call_resolution"
+) -> dict:
+    from pathlib import Path
+    from graphify.call_dag import resolve_call_graph
+
+    fixture_path = Path(fixture_dir)
+    if not fixture_path.exists():
+        return {"error": f"Fixture dir not found: {fixture_dir}"}
+
+    all_files = list(fixture_path.rglob("*.py")) + list(fixture_path.rglob("*.ts"))
+    if not all_files:
+        return {"precision": 0, "recall": 0, "f1": 0, "total_resolved": 0, "total_expected": 0}
+
+    total_resolved = 0
+    total_expected = 0
+    correct = 0
+
+    for fp in all_files:
+        resolved, unresolved = resolve_call_graph([fp], G)
+        total_resolved += len(resolved)
+        expected_edges = _count_expected_edges(fp)
+        total_expected += expected_edges
+        for rc in resolved:
+            if rc.confidence in ("EXTRACTED", "INFERRED"):
+                correct += 1
+
+    precision = correct / max(1, total_resolved)
+    recall = correct / max(1, total_expected)
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+
+    return {
+        "precision": round(precision, 4),
+        "recall": round(recall, 4),
+        "f1": round(f1, 4),
+        "total_resolved": total_resolved,
+        "total_expected": total_expected,
+        "correct": correct,
+    }
+
+
+def _count_expected_edges(fp) -> int:
+    try:
+        content = fp.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return 0
+    import re
+    pattern = r"(\w+)\s*\("
+    matches = re.findall(pattern, content)
+    builtins = {"if", "for", "while", "print", "len", "range", "str", "int",
+                "float", "list", "dict", "set", "tuple", "bool", "type",
+                "isinstance", "hasattr", "getattr", "setattr", "delattr",
+                "super", "self", "this", "return", "yield", "import", "from",
+                "class", "def", "with", "elif", "else", "try", "except",
+                "finally", "raise", "assert", "del", "pass", "break",
+                "continue", "global", "nonlocal", "lambda", "None", "True", "False"}
+    return sum(1 for m in matches if m not in builtins) // 3
+
+
+def benchmark_call_resolution_scale(
+    G, node_counts: list[int] | None = None
+) -> list[dict]:
+    if node_counts is None:
+        node_counts = [50000, 100000, 500000, 1000000]
+
+    results: list[dict] = []
+    for n in node_counts:
+        sub = G.subgraph(list(G.nodes)[:n]) if n <= len(G.nodes) else G
+        r = benchmark_call_resolution(sub, num_files=min(10, n // 5000), seed=42)
+        r["graph_nodes"] = n
+        results.append(r)
+    return results

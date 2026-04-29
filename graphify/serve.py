@@ -438,6 +438,32 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
                     "required": ["source", "target"],
                 },
             ),
+            types.Tool(
+                name="context",
+                description="360-degree symbol view: incoming/outgoing calls, definition, and process membership.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Symbol name to look up"},
+                    },
+                    "required": ["name"],
+                },
+            ),
+            types.Tool(
+                name="impact",
+                description="Blast radius analysis: what would be affected by a change to the target symbol.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "target": {"type": "string", "description": "Target symbol or class name"},
+                        "direction": {"type": "string", "enum": ["upstream", "downstream", "both"], "default": "both",
+                                      "description": "Direction to traverse call graph"},
+                        "minConfidence": {"type": "number", "default": 0.0,
+                                         "description": "Minimum confidence score (0-1)"},
+                    },
+                    "required": ["target"],
+                },
+            ),
         ]
 
     def _tool_query_graph(arguments: dict) -> str:
@@ -679,6 +705,142 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
             segments.append(f"--{rel}{conf_str}--> {G.nodes[v].get('label', v)}")
         return f"Shortest path ({hops} hops):\n  " + " ".join(segments)
 
+    def _tool_context(arguments: dict) -> str:
+        name = arguments["name"]
+        matches = _find_node(G, name)
+        if not matches:
+            return f"No symbol matching '{name}' found."
+        nid = matches[0]
+        d = G.nodes[nid]
+        lines = [
+            f"symbol:",
+            f"  kind: {d.get('node_type', d.get('file_type', 'unknown'))}",
+            f"  file: {d.get('source_file', '')}",
+            f"  line: {d.get('source_location', '')}",
+            f"  signature: {d.get('signature', '')}",
+            f"  visibility: {d.get('visibility', 'public')}",
+            f"incoming:",
+        ]
+        incoming_calls: list[str] = []
+        imported_by: list[str] = []
+        for neighbor in G.neighbors(nid):
+            edge_data = G.edges[neighbor, nid] if G.has_edge(neighbor, nid) else G.edges.get((neighbor, nid), {})
+            rel = edge_data.get("relation", "")
+            if rel == "calls":
+                incoming_calls.append(f"  - {G.nodes[neighbor].get('label', neighbor)} [{edge_data.get('confidence', '')}]")
+            elif rel in ("imports", "imports_from"):
+                imported_by.append(f"  - {G.nodes[neighbor].get('label', neighbor)} [{edge_data.get('confidence', '')}]")
+        if incoming_calls:
+            lines.append("  calls:")
+            lines.extend(incoming_calls)
+        if imported_by:
+            lines.append("  imports:")
+            lines.extend(imported_by)
+        if not incoming_calls and not imported_by:
+            lines.append("  (none)")
+        lines.append("outgoing:")
+        outgoing_calls: list[str] = []
+        processes: list[str] = []
+        for neighbor in G.neighbors(nid):
+            edge_data = G.edges[nid, neighbor]
+            rel = edge_data.get("relation", "")
+            if rel == "calls":
+                outgoing_calls.append(f"  - {G.nodes[neighbor].get('label', neighbor)} [{edge_data.get('confidence', '')}]")
+            elif rel == "step_in_process":
+                processes.append(f"  - {G.nodes[neighbor].get('label', neighbor)}")
+        if outgoing_calls:
+            lines.append("  calls:")
+            lines.extend(outgoing_calls)
+        if processes:
+            lines.append("  processes:")
+            lines.extend(processes)
+        if not outgoing_calls and not processes:
+            lines.append("  (none)")
+        return "\n".join(lines)
+
+    def _tool_impact(arguments: dict) -> str:
+        target = arguments["target"]
+        direction = arguments.get("direction", "both")
+        min_conf = float(arguments.get("minConfidence", 0.0))
+        matches = _find_node(G, target)
+        if not matches:
+            return f"No symbol matching '{target}' found."
+        nid = matches[0]
+        d = G.nodes[nid]
+        upstream: dict[int, list[dict]] = {}
+        downstream: dict[int, list[dict]] = {}
+
+        def _bfs_calls(start: str, reverse: bool, max_depth: int = 5) -> dict[int, list[dict]]:
+            result: dict[int, list[dict]] = {}
+            visited: set[str] = {start}
+            frontier = [start]
+            for depth in range(1, max_depth + 1):
+                next_frontier: list[str] = []
+                layer: list[dict] = []
+                for node in frontier:
+                    neighbors = G.predecessors(node) if reverse and G.is_directed() else G.neighbors(node)
+                    for nb in neighbors:
+                        if nb in visited:
+                            continue
+                        if reverse:
+                            edge_data = G.edges[nb, node]
+                        else:
+                            edge_data = G.edges[node, nb]
+                        rel = edge_data.get("relation", "")
+                        if rel != "calls":
+                            continue
+                        conf_score = edge_data.get("confidence_score", 1.0)
+                        if conf_score < min_conf:
+                            continue
+                        visited.add(nb)
+                        next_frontier.append(nb)
+                        layer.append({
+                            "symbol": G.nodes[nb].get("label", nb),
+                            "relation": rel,
+                            "confidence": edge_data.get("confidence", ""),
+                            "file": G.nodes[nb].get("source_file", ""),
+                        })
+                if layer:
+                    result[depth] = layer
+                if not next_frontier:
+                    break
+                frontier = next_frontier
+            return result
+
+        if direction in ("upstream", "both"):
+            upstream = _bfs_calls(nid, reverse=True)
+        if direction in ("downstream", "both"):
+            downstream = _bfs_calls(nid, reverse=False)
+
+        total_affected = sum(len(v) for v in upstream.values()) + sum(len(v) for v in downstream.values())
+        risk = "HIGH" if total_affected > 20 else "MEDIUM" if total_affected > 5 else "LOW"
+
+        lines = [
+            f"target:",
+            f"  kind: {d.get('node_type', d.get('file_type', 'unknown'))}",
+            f"  file: {d.get('source_file', '')}",
+            f"upstream:",
+        ]
+        if upstream:
+            for depth in sorted(upstream):
+                lines.append(f"  depth_{depth}:")
+                for item in upstream[depth]:
+                    lines.append(f"    - {item['symbol']} [{item['relation']}] [{item['confidence']}] {item['file']}")
+        else:
+            lines.append("  (none)")
+        lines.append("downstream:")
+        if downstream:
+            for depth in sorted(downstream):
+                lines.append(f"  depth_{depth}:")
+                for item in downstream[depth]:
+                    lines.append(f"    - {item['symbol']} [{item['relation']}] [{item['confidence']}] {item['file']}")
+        else:
+            lines.append("  (none)")
+        lines.append(f"summary:")
+        lines.append(f"  total_affected: {total_affected}")
+        lines.append(f"  risk_level: {risk}")
+        return "\n".join(lines)
+
     _handlers = {
         "query_graph": _tool_query_graph,
         "get_node": _tool_get_node,
@@ -687,6 +849,8 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         "god_nodes": _tool_god_nodes,
         "graph_stats": _tool_graph_stats,
         "shortest_path": _tool_shortest_path,
+        "context": _tool_context,
+        "impact": _tool_impact,
     }
 
     @server.call_tool()
