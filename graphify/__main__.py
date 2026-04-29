@@ -1050,6 +1050,12 @@ def main() -> None:
         print("  hermes uninstall        remove skill from ~/.hermes/skills/graphify/")
         print("  kiro install            write skill to .kiro/skills/graphify/ + steering file (Kiro IDE/CLI)")
         print("  kiro uninstall          remove skill + steering file")
+        print("  skills                  generate 4 base skills to .claude/skills/graphify/")
+        print("    --repo                  also generate per-community SKILL.md files")
+        print("    --hooks                 also generate pre/post tool use hooks")
+        print("    --all                   all three: skills + repo + hooks")
+        print("    --output <dir>          output directory (default: .claude/skills/graphify/)")
+        print("    --graph <path>          path to graph.json (default: graphify-out/graph.json)")
         print()
         return
 
@@ -1620,6 +1626,51 @@ def main() -> None:
             scale=scale,
             phase=phase,
         )
+    elif cmd == "skills":
+        from graphify.skills import generate_base_skills, generate_all
+
+        do_repo = "--repo" in sys.argv
+        do_hooks = "--hooks" in sys.argv
+        do_all = "--all" in sys.argv
+        if do_all:
+            do_repo = True
+            do_hooks = True
+
+        output_dir = Path(".claude/skills/graphify")
+        graph_path = "graphify-out/graph.json"
+        args = sys.argv[2:]
+        i = 0
+        while i < len(args):
+            if args[i] == "--output" and i + 1 < len(args):
+                output_dir = Path(args[i + 1]); i += 2
+            elif args[i].startswith("--output="):
+                output_dir = Path(args[i].split("=", 1)[1]); i += 1
+            elif args[i] == "--graph" and i + 1 < len(args):
+                graph_path = args[i + 1]; i += 2
+            elif args[i].startswith("--graph="):
+                graph_path = args[i].split("=", 1)[1]; i += 1
+            elif args[i] in ("--repo", "--hooks", "--all"):
+                i += 1
+            else:
+                i += 1
+
+        if do_repo or do_hooks:
+            result = generate_all(output_dir, graph_path)
+            print(f"Base skills:")
+            for s in result["skills"]:
+                print(f"  {s}")
+            if do_repo:
+                print(f"Community skills: {result['community_skills']}")
+            if do_hooks:
+                print(f"Hooks:")
+                print(f"  pre-tool:  {result['hooks']['pre_tool']}")
+                print(f"  post-tool: {result['hooks']['post_tool']}")
+        else:
+            paths = generate_base_skills(output_dir, graph_path)
+            print("Base skills:")
+            for s in paths:
+                print(f"  {s}")
+
     else:
         print(f"error: unknown command '{cmd}'", file=sys.stderr)
         print("Run 'graphify --help' for usage.", file=sys.stderr)
