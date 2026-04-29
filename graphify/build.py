@@ -39,6 +39,18 @@ def _normalize_id(s: str) -> str:
     return cleaned.strip("_").lower()
 
 
+def _validate_typed_nodes(nodes: list[dict]) -> list[str]:
+    from .code_schema import NodeType
+
+    valid_types = {t.name for t in NodeType}
+    warnings: list[str] = []
+    for node in nodes:
+        nt = node.get("node_type")
+        if nt and nt not in valid_types:
+            warnings.append(f"node {node.get('id', '?')}: unknown node_type '{nt}'")
+    return warnings
+
+
 def build_from_json(extraction: dict, *, directed: bool = False, build_indexes: bool = True,
                     materialize: list[str] | None = None) -> nx.Graph:
     """Build a NetworkX graph from an extraction dict.
@@ -72,6 +84,9 @@ def build_from_json(extraction: dict, *, directed: bool = False, build_indexes: 
     real_errors = [e for e in errors if "does not match any node id" not in e]
     if real_errors:
         print(f"[graphify] Extraction warning ({len(real_errors)} issues): {real_errors[0]}", file=sys.stderr)
+    typed_warnings = _validate_typed_nodes(extraction.get("nodes", []))
+    for w in typed_warnings:
+        print(f"[graphify] WARNING: {w}", file=sys.stderr)
     G: nx.Graph = nx.DiGraph() if directed else nx.Graph()
     for node in extraction.get("nodes", []):
         G.add_node(node["id"], **{k: v for k, v in node.items() if k != "id"})

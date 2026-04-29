@@ -988,6 +988,8 @@ def to_graphml(
     Edge confidence (EXTRACTED/INFERRED/AMBIGUOUS) is preserved as an edge attribute.
     """
     H = G.copy()
+    if "indexes" in H.graph:
+        del H.graph["indexes"]
     node_community = _node_community_map(communities)
     for node_id in H.nodes():
         H.nodes[node_id]["community"] = node_community.get(node_id, -1)
