@@ -98,3 +98,4 @@ cat docs/plans/pr-prompts/pr-N-*.md
 - All PRs produce a git commit with conventional format: `feat(phase-N): description`
 - Each PR must pass its Code Review Checklist before being marked complete
 - Each PR must achieve ≥ 90% test coverage on new/modified code (`pytest --cov=<module> --cov-report=term`)
+- Each PR must record a benchmark: `graphify benchmark --seed 42 --output graphify-out/benchmark.json` and update the Progressive Benchmark Log
