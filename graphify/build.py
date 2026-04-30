@@ -39,8 +39,22 @@ def _normalize_id(s: str) -> str:
     return cleaned.strip("_").lower()
 
 
+def _validate_typed_nodes(nodes: list[dict]) -> list[str]:
+    from .code_schema import NodeType
+
+    valid_types = {t.name for t in NodeType}
+    warnings: list[str] = []
+    for node in nodes:
+        nt = node.get("node_type")
+        if nt and nt not in valid_types:
+            warnings.append(f"node {node.get('id', '?')}: unknown node_type '{nt}'")
+    return warnings
+
+
 def build_from_json(extraction: dict, *, directed: bool = False, build_indexes: bool = True,
-                    materialize: list[str] | None = None) -> nx.Graph:
+                    materialize: list[str] | None = None,
+                    trace_processes: bool = False,
+                    generate_embeddings: bool = False) -> nx.Graph:
     """Build a NetworkX graph from an extraction dict.
 
     directed=True produces a DiGraph that preserves edge direction (source→target).
@@ -72,6 +86,9 @@ def build_from_json(extraction: dict, *, directed: bool = False, build_indexes: 
     real_errors = [e for e in errors if "does not match any node id" not in e]
     if real_errors:
         print(f"[graphify] Extraction warning ({len(real_errors)} issues): {real_errors[0]}", file=sys.stderr)
+    typed_warnings = _validate_typed_nodes(extraction.get("nodes", []))
+    for w in typed_warnings:
+        print(f"[graphify] WARNING: {w}", file=sys.stderr)
     G: nx.Graph = nx.DiGraph() if directed else nx.Graph()
     for node in extraction.get("nodes", []):
         G.add_node(node["id"], **{k: v for k, v in node.items() if k != "id"})
@@ -113,10 +130,26 @@ def build_from_json(extraction: dict, *, directed: bool = False, build_indexes: 
         for rel_type in materialize:
             closure = compute_transitive_closure(G, rel_type)
             write_materialized_view(closure, rel_type, matviews_dir)
+    if trace_processes:
+        from .processes import build_processes, write_processes_json
+        processes = build_processes(G)
+        write_processes_json(processes)
+        for proc in processes:
+            for i in range(len(proc.steps) - 1):
+                G.add_edge(
+                    proc.steps[i].node_id, proc.steps[i + 1].node_id,
+                    relation="step_in_process", confidence="INFERRED",
+                    process_id=proc.id, step_index=i,
+                )
+    if generate_embeddings:
+        from .search.embeddings import generate_embeddings as _gen_emb, save_embeddings as _save_emb
+        emb = _gen_emb(G)
+        _save_emb(emb, Path("graphify-out/embeddings"))
     return G
 
 
-def build(extractions: list[dict], *, directed: bool = False, build_indexes: bool = True) -> nx.Graph:
+def build(extractions: list[dict], *, directed: bool = False, build_indexes: bool = True,
+          trace_processes: bool = False, generate_embeddings: bool = False) -> nx.Graph:
     """Merge multiple extraction results into one graph.
 
     directed=True produces a DiGraph that preserves edge direction (source→target).
@@ -134,7 +167,8 @@ def build(extractions: list[dict], *, directed: bool = False, build_indexes: boo
         combined["hyperedges"].extend(ext.get("hyperedges", []))
         combined["input_tokens"] += ext.get("input_tokens", 0)
         combined["output_tokens"] += ext.get("output_tokens", 0)
-    return build_from_json(combined, directed=directed, build_indexes=build_indexes)
+    return build_from_json(combined, directed=directed, build_indexes=build_indexes,
+                           trace_processes=trace_processes, generate_embeddings=generate_embeddings)
 
 
 def _norm_label(label: str) -> str:
@@ -195,6 +229,7 @@ def build_merge(
     *,
     directed: bool = False,
     build_indexes: bool = True,
+    trace_processes: bool = False,
 ) -> nx.Graph:
     """Load existing graph.json, merge new chunks into it, and save back.
 
@@ -220,7 +255,8 @@ def build_merge(
         base = []
 
     all_chunks = base + list(new_chunks)
-    G = build(all_chunks, directed=directed, build_indexes=build_indexes)
+    G = build(all_chunks, directed=directed, build_indexes=build_indexes,
+              trace_processes=trace_processes)
 
     # Prune nodes from deleted source files
     if prune_sources:

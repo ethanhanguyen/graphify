@@ -135,3 +135,34 @@ def cohesion_score(G: nx.Graph, community_nodes: list[str]) -> float:
 
 def score_all(G: nx.Graph, communities: dict[int, list[str]]) -> dict[int, float]:
     return {cid: cohesion_score(G, nodes) for cid, nodes in communities.items()}
+
+
+def cluster_with_processes(G: nx.Graph, processes: list | None = None) -> dict[int, list[str]]:
+    """Community detection using process membership as cohesion signal.
+
+    Nodes that appear together in the same process trace get a cohesion bonus.
+    Falls back to regular cluster() if no processes provided.
+    """
+    if not processes:
+        return cluster(G)
+
+    proc_bonus: dict[frozenset, float] = {}
+    for proc in processes:
+        if not hasattr(proc, 'steps'):
+            continue
+        step_ids = [s.node_id for s in proc.steps if s.node_id in G]
+        for i in range(len(step_ids)):
+            for j in range(i + 1, len(step_ids)):
+                key = frozenset((step_ids[i], step_ids[j]))
+                proc_bonus[key] = proc_bonus.get(key, 0) + 0.1
+
+    G_proc = G.copy()
+    for (u, v), bonus in proc_bonus.items():
+        u_str, v_str = list(u)[0], list(v)[0]
+        if G_proc.has_edge(u_str, v_str):
+            old_weight = G_proc.edges[u_str, v_str].get("weight", 1.0)
+            G_proc.edges[u_str, v_str]["weight"] = old_weight + bonus
+        elif G_proc.has_node(u_str) and G_proc.has_node(v_str):
+            G_proc.add_edge(u_str, v_str, weight=bonus, relation="step_in_process")
+
+    return cluster(G_proc)

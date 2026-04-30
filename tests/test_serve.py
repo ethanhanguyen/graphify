@@ -11,6 +11,9 @@ from graphify.serve import (
     _dfs,
     _subgraph_to_text,
     _load_graph,
+    _bidirectional_shortest_path,
+    _dijkstra_shortest_path,
+    _astar_search,
 )
 
 
@@ -151,3 +154,165 @@ def test_load_graph_missing_file(tmp_path):
     graphify_dir.mkdir()
     with pytest.raises(SystemExit):
         _load_graph(str(graphify_dir / "nonexistent.json"))
+
+
+# --- _bidirectional_shortest_path ---
+
+def test_bidirectional_shortest_path_direct():
+    G = _make_graph()
+    path, length = _bidirectional_shortest_path(G, "n1", "n2")
+    assert path == ["n1", "n2"]
+    assert length == 1.0
+
+
+def test_bidirectional_shortest_path_two_hops():
+    G = _make_graph()
+    path, length = _bidirectional_shortest_path(G, "n1", "n3")
+    assert path == ["n1", "n2", "n3"]
+    assert length == 2.0
+
+
+def test_bidirectional_no_path():
+    G = _make_graph()
+    G.add_node("n10", label="orphan")
+    path, length = _bidirectional_shortest_path(G, "n1", "n10")
+    assert path == []
+    assert length == float("inf")
+
+
+def test_bidirectional_max_hops_exceeded():
+    G = _make_graph()
+    path, length = _bidirectional_shortest_path(G, "n1", "n4", max_hops=1)
+    assert path == []
+    assert length == float("inf")
+
+
+def test_bidirectional_same_node():
+    G = _make_graph()
+    path, length = _bidirectional_shortest_path(G, "n1", "n1")
+    assert path == ["n1"]
+    assert length == 0.0
+
+
+def test_bidirectional_missing_node():
+    G = _make_graph()
+    path, length = _bidirectional_shortest_path(G, "n1", "zzz")
+    assert path == []
+    assert length == float("inf")
+
+
+# --- _dijkstra_shortest_path ---
+
+def test_dijkstra_with_weights():
+    G = nx.Graph()
+    G.add_node("a", label="A")
+    G.add_node("b", label="B")
+    G.add_node("c", label="C")
+    G.add_edge("a", "b", weight=10.0)
+    G.add_edge("b", "c", weight=1.0)
+    G.add_edge("a", "c", weight=100.0)
+    path, total = _dijkstra_shortest_path(G, "a", "c")
+    assert path == ["a", "b", "c"]
+    assert total == 11.0
+
+
+def test_dijkstra_same_node():
+    G = _make_graph()
+    path, total = _dijkstra_shortest_path(G, "n1", "n1")
+    assert path == ["n1"]
+    assert total == 0.0
+
+
+def test_dijkstra_no_path():
+    G = _make_graph()
+    G.add_node("orphan", label="orphan")
+    path, total = _dijkstra_shortest_path(G, "n1", "orphan")
+    assert path == []
+    assert total == float("inf")
+
+
+# --- _astar_search ---
+
+def test_astar_with_communities():
+    G = _make_graph()
+    communities = _communities_from_graph(G)
+    path = _astar_search(G, "n1", "n4", communities)
+    assert len(path) >= 2
+    assert path[0] == "n1"
+    assert path[-1] == "n4"
+
+
+def test_astar_stays_in_community():
+    G = nx.Graph()
+    G.add_node("a", label="A", community=0)
+    G.add_node("b", label="B", community=0)
+    G.add_node("c", label="C", community=1)
+    G.add_edge("a", "b")
+    G.add_edge("b", "c")
+    communities = {0: ["a", "b"], 1: ["c"]}
+    path = _astar_search(G, "a", "c", communities)
+    assert path == ["a", "b", "c"]
+
+
+def test_astar_same_node():
+    G = _make_graph()
+    communities = _communities_from_graph(G)
+    path = _astar_search(G, "n1", "n1", communities)
+    assert path == ["n1"]
+
+
+def test_astar_no_path():
+    G = _make_graph()
+    G.add_node("orphan", label="orphan")
+    communities = _communities_from_graph(G)
+    path = _astar_search(G, "n1", "orphan", communities)
+    assert path == []
+
+
+# --- _score_nodes with label index ---
+
+def test_score_nodes_with_label_index():
+    G = _make_graph()
+    from graphify.index import build_label_index
+    G.graph["indexes"] = {"label_index": build_label_index(G)}
+    scored = _score_nodes(G, ["extract"])
+    nids = [nid for _, nid in scored]
+    assert "n1" in nids
+
+
+def test_score_nodes_index_no_matches():
+    G = _make_graph()
+    from graphify.index import build_label_index
+    G.graph["indexes"] = {"label_index": build_label_index(G)}
+    scored = _score_nodes(G, ["zzzzzz"])
+    assert scored == []
+
+
+# --- detect_changes tool response format ---
+
+def test_detect_changes_tool_response():
+    G = nx.Graph()
+    G.add_node("n1", label="handle_root()", source_file="handlers.py",
+               source_location="L10", node_type="FUNCTION")
+    G.add_node("n2", label="do_auth()", source_file="auth.py",
+               source_location="L20", node_type="FUNCTION")
+    G.add_node("n3", label="query_db()", source_file="db.py",
+               source_location="L30", node_type="FUNCTION")
+    G.add_node("n4", label="main()", source_file="main.py",
+               source_location="L1", node_type="FUNCTION")
+    G.add_edge("n1", "n2", relation="calls", confidence="EXTRACTED",
+               confidence_score=1.0)
+    G.add_edge("n2", "n3", relation="calls", confidence="EXTRACTED",
+               confidence_score=1.0)
+    G.add_edge("n1", "n4", relation="handles_route", confidence="EXTRACTED",
+               route="/api")
+
+    from graphify.processes import build_processes, detect_changes
+    procs = build_processes(G)
+    result = detect_changes(G, procs, changed_files=["auth.py"])
+    assert "summary" in result
+    assert "changed_symbols" in result
+    assert "affected_processes" in result
+    assert "recommendations" in result
+    assert result["summary"]["risk_level"] in ("LOW", "MEDIUM", "HIGH")
+    assert result["summary"]["changed_count"] == 1

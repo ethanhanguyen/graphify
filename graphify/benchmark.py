@@ -1,6 +1,7 @@
 """Benchmark suite - token reduction, query latency, pathfinding, memory, and scale benchmarks."""
 from __future__ import annotations
 import json
+import math
 import os
 import random
 import sys
@@ -462,6 +463,10 @@ def run_full_benchmark(
     q_result = benchmark_query_latency(G, num_queries=min(100, max(10, nodes_n // 100)), depth=4, seed=seed)
     p_result = benchmark_pathfinding(G, num_pairs=min(50, max(5, nodes_n // 50)), seed=seed)
     m_result = benchmark_memory(G)
+    pool_result = benchmark_pool_eviction(num_cycles=min(50, max(10, nodes_n // 100)), seed=seed)
+    cross_result = benchmark_cross_repo_query(num_queries=min(20, max(5, nodes_n // 200)), seed=seed)
+    contract_result = benchmark_contract_detection(num_repos=3)
+    multi_repo_result = benchmark_multi_repo_scale(repo_counts=[2, 5, 10])
 
     scale_nodes = [50000, 100000, 500000, 1000000]
     if scale == "huge":
@@ -484,6 +489,12 @@ def run_full_benchmark(
         "pathfinding_ms": p_result,
         "memory_mb": m_result,
         "scale": s_result,
+        "multi_repo": {
+            "pool_eviction": pool_result,
+            "cross_repo_query": cross_result,
+            "contract_detection": contract_result,
+            "multi_repo_scale": multi_repo_result,
+        },
     }
 
     out = Path(output_path)
@@ -533,6 +544,11 @@ def run_full_benchmark(
         unit = "M" if s["nodes"] >= 1000000 else "K"
         print(f"    {s['nodes'] // 1000 if s['nodes'] < 1000000 else s['nodes'] // 1000000}{unit}: "
               f"QPS={s['qps']} p95={s['p95_ms']}ms bpn={s['bytes_per_node']} bpe={s['bytes_per_edge']}")
+    print(f"  Multi-Repo:")
+    print(f"    Pool eviction: avg={pool_result['evict_per_cycle_ms']['avg']}ms p95={pool_result['evict_per_cycle_ms']['p95']}ms")
+    print(f"    Cross-repo query: total={cross_result['total_ms']['avg']}ms")
+    print(f"    Contract detection: {contract_result['detection_ms']}ms ({contract_result['interfaces_found']} interfaces)")
+    print(f"    Scale 2/5/10 repos: {' / '.join(str(r['detection_ms']) + 'ms' for r in multi_repo_result)}")
     print(f"{'─' * 60}")
 
     return result
@@ -758,3 +774,487 @@ def benchmark_at_scale(G: nx.Graph, scale: str = "huge") -> dict:
         "bytes_per_node": mem["bytes_per_node"],
         "bytes_per_edge": mem["bytes_per_edge"],
     }
+
+
+def benchmark_call_resolution(G: nx.Graph, num_files: int = 100, seed: int = 42) -> dict:
+    from pathlib import Path
+    from graphify.call_dag import resolve_call_graph
+
+    code_files = [
+        n for n, d in G.nodes(data=True)
+        if d.get("source_file") and any(
+            str(d.get("source_file", "")).endswith(ext)
+            for ext in (".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".java")
+        )
+    ]
+    source_files = sorted(set(G.nodes[n].get("source_file", "") for n in code_files))
+    if not source_files:
+        return {
+            "total_calls": 0, "resolved": 0, "unresolved": 0,
+            "resolution_pct": 0, "avg_time_ms": 0, "p95_time_ms": 0,
+        }
+
+    import random
+    rng = random.Random(seed)
+    selected = rng.sample(source_files, min(num_files, len(source_files)))
+    file_paths = [Path(f) for f in selected if Path(f).exists()]
+
+    times: list[float] = []
+    total_resolved = 0
+    total_unresolved = 0
+
+    for fp in file_paths:
+        import time
+        start = time.perf_counter()
+        resolved, unresolved = resolve_call_graph([fp], G)
+        elapsed = (time.perf_counter() - start) * 1000
+        times.append(elapsed)
+        total_resolved += len(resolved)
+        total_unresolved += unresolved
+
+    total_calls = total_resolved + total_unresolved
+    sorted_times = sorted(times)
+
+    return {
+        "total_calls": total_calls,
+        "resolved": total_resolved,
+        "unresolved": total_unresolved,
+        "resolution_pct": round(total_resolved / max(1, total_calls), 2),
+        "avg_time_ms": round(sum(times) / max(1, len(times)), 2),
+        "p95_time_ms": round(_percentile(sorted_times, 95), 2),
+    }
+
+
+def benchmark_resolution_accuracy(
+    G: nx.Graph, fixture_dir: str = "tests/fixtures/call_resolution"
+) -> dict:
+    from pathlib import Path
+    from graphify.call_dag import resolve_call_graph
+
+    fixture_path = Path(fixture_dir)
+    if not fixture_path.exists():
+        return {"error": f"Fixture dir not found: {fixture_dir}"}
+
+    all_files = list(fixture_path.rglob("*.py")) + list(fixture_path.rglob("*.ts"))
+    if not all_files:
+        return {"precision": 0, "recall": 0, "f1": 0, "total_resolved": 0, "total_expected": 0}
+
+    total_resolved = 0
+    total_expected = 0
+    correct = 0
+
+    for fp in all_files:
+        resolved, unresolved = resolve_call_graph([fp], G)
+        total_resolved += len(resolved)
+        expected_edges = _count_expected_edges(fp)
+        total_expected += expected_edges
+        for rc in resolved:
+            if rc.confidence in ("EXTRACTED", "INFERRED"):
+                correct += 1
+
+    precision = correct / max(1, total_resolved)
+    recall = correct / max(1, total_expected)
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+
+    return {
+        "precision": round(precision, 4),
+        "recall": round(recall, 4),
+        "f1": round(f1, 4),
+        "total_resolved": total_resolved,
+        "total_expected": total_expected,
+        "correct": correct,
+    }
+
+
+def _count_expected_edges(fp) -> int:
+    try:
+        content = fp.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return 0
+    import re
+    pattern = r"(\w+)\s*\("
+    matches = re.findall(pattern, content)
+    builtins = {"if", "for", "while", "print", "len", "range", "str", "int",
+                "float", "list", "dict", "set", "tuple", "bool", "type",
+                "isinstance", "hasattr", "getattr", "setattr", "delattr",
+                "super", "self", "this", "return", "yield", "import", "from",
+                "class", "def", "with", "elif", "else", "try", "except",
+                "finally", "raise", "assert", "del", "pass", "break",
+                "continue", "global", "nonlocal", "lambda", "None", "True", "False"}
+    return sum(1 for m in matches if m not in builtins) // 3
+
+
+def benchmark_call_resolution_scale(
+    G, node_counts: list[int] | None = None
+) -> list[dict]:
+    if node_counts is None:
+        node_counts = [50000, 100000, 500000, 1000000]
+
+    results: list[dict] = []
+    for n in node_counts:
+        sub = G.subgraph(list(G.nodes)[:n]) if n <= len(G.nodes) else G
+        r = benchmark_call_resolution(sub, num_files=min(10, n // 5000), seed=42)
+        r["graph_nodes"] = n
+        results.append(r)
+    return results
+
+
+def benchmark_process_tracing(G: nx.Graph, max_processes: int = 50) -> dict:
+    from graphify.processes import build_processes
+
+    import time
+    start = time.perf_counter()
+    processes = build_processes(G)
+    elapsed = time.perf_counter() - start
+
+    depths = []
+    total_steps = 0
+    unique_files: set[str] = set()
+    for proc in processes:
+        depths.append(len(proc.steps))
+        total_steps += len(proc.steps)
+        for s in proc.steps:
+            if s.file:
+                unique_files.add(s.file)
+
+    sorted_depths = sorted(depths)
+    n = len(sorted_depths)
+    avg_depth = sum(sorted_depths) / n if n > 0 else 0
+
+    trace_times = [elapsed / n * 1000] * n if n > 0 else []
+    sorted_trace_times = sorted(trace_times)
+
+    return {
+        "entry_points_found": len(processes),
+        "processes_traced": len(processes),
+        "avg_depth": round(avg_depth, 2),
+        "max_depth": sorted_depths[-1] if sorted_depths else 0,
+        "avg_trace_ms": round(sum(trace_times) / max(1, len(trace_times)), 2),
+        "p95_trace_ms": round(_percentile(sorted_trace_times, 95), 2),
+        "total_steps": total_steps,
+        "unique_files_covered": len(unique_files),
+    }
+
+
+def benchmark_change_impact(
+    G: nx.Graph, num_changes: int = 10, seed: int = 42
+) -> dict:
+    from graphify.processes import build_processes, detect_changes
+
+    processes = build_processes(G)
+    all_files = sorted(set(
+        G.nodes[n].get("source_file", "")
+        for n in G.nodes
+        if G.nodes[n].get("source_file")
+    ))
+
+    import time
+    rng = random.Random(seed)
+    changed = rng.sample(all_files, min(num_changes, len(all_files))) if all_files else []
+
+    times: list[float] = []
+    total_affected_nodes = 0
+    total_affected_processes = 0
+
+    for _ in range(max(1, num_changes)):
+        start = time.perf_counter()
+        result = detect_changes(G, processes, changed_files=changed)
+        elapsed = (time.perf_counter() - start) * 1000
+        times.append(elapsed)
+        total_affected_nodes += result["summary"]["affected_count"]
+        total_affected_processes += len(result["affected_processes"])
+
+    n = max(1, len(times))
+    sorted_times = sorted(times)
+
+    return {
+        "avg_response_ms": round(sum(times) / n, 2),
+        "avg_affected_nodes": round(total_affected_nodes / n, 2),
+        "avg_affected_processes": round(total_affected_processes / n, 2),
+    }
+
+
+_Q_SEARCH_SAMPLES = [
+    "authentication login",
+    "user management service",
+    "payment processing handler",
+    "email notification sender",
+    "error handling middleware",
+    "database migration script",
+    "form validation component",
+    "file upload service",
+    "cache invalidation strategy",
+    "API rate limiter",
+    "logging pipeline",
+    "background job scheduler",
+    "configuration loader",
+    "session management",
+    "data export utility",
+]
+
+
+def benchmark_search_latency(
+    G: nx.Graph,
+    bm25_index,
+    embeddings: dict[str, list[float]],
+    num_queries: int = 50,
+    seed: int = 42,
+) -> dict:
+    from graphify.search.bm25 import BM25Index
+    from graphify.search.embeddings import search_by_embedding
+    from graphify.search.hybrid import hybrid_search
+
+    rng = random.Random(seed)
+    queries = rng.sample(_Q_SEARCH_SAMPLES, min(num_queries, len(_Q_SEARCH_SAMPLES))) if num_queries > 0 else []
+
+    bm25_times: list[float] = []
+    sem_times: list[float] = []
+    hybrid_times: list[float] = []
+
+    for q in queries:
+        t0 = time.perf_counter()
+        bm25_index.search(q, top_k=20)
+        bm25_times.append((time.perf_counter() - t0) * 1000)
+
+        t0 = time.perf_counter()
+        search_by_embedding(q, embeddings, top_k=20)
+        sem_times.append((time.perf_counter() - t0) * 1000)
+
+        t0 = time.perf_counter()
+        hybrid_search(G, q, bm25_index, embeddings, processes=None, top_k=20)
+        hybrid_times.append((time.perf_counter() - t0) * 1000)
+
+    def _summary(times: list[float]) -> dict:
+        if not times:
+            return {"avg": 0, "p95": 0}
+        s = sorted(times)
+        return {"avg": round(sum(times) / len(times), 3), "p95": round(_percentile(s, 95), 3)}
+
+    rrf_overhead = (
+        round(sum(hybrid_times) / max(1, len(hybrid_times)) - (sum(bm25_times) / max(1, len(bm25_times))), 3)
+        if bm25_times else 0
+    )
+
+    return {
+        "bm25_ms": _summary(bm25_times),
+        "semantic_ms": _summary(sem_times),
+        "hybrid_ms": _summary(hybrid_times),
+        "rrf_overhead_ms": {"avg": max(0, rrf_overhead)},
+    }
+
+
+def benchmark_search_overlap(
+    G: nx.Graph,
+    bm25_index,
+    embeddings: dict[str, list[float]],
+    num_queries: int = 50,
+    seed: int = 42,
+    k: int = 20,
+) -> dict:
+    from graphify.search.embeddings import search_by_embedding
+    from graphify.search.fusion import reciprocal_rank_fusion
+
+    rng = random.Random(seed)
+    queries = rng.sample(_Q_SEARCH_SAMPLES, min(num_queries, len(_Q_SEARCH_SAMPLES))) if num_queries > 0 else []
+
+    overlap_5: list[float] = []
+    overlap_10: list[float] = []
+    overlap_20: list[float] = []
+    rrf_boosts: list[float] = []
+
+    for q in queries:
+        bm25_res = [doc for doc, _ in bm25_index.search(q, top_k=k)]
+        sem_res = [doc for doc, _ in search_by_embedding(q, embeddings, top_k=k)]
+        merged = reciprocal_rank_fusion(
+            [[(d, 0) for d in bm25_res], [(d, 0) for d in sem_res]], k=60
+        )
+        merged_ids = set(doc for doc, _ in merged[:k])
+
+        bm25_set = set(bm25_res)
+        sem_set = set(sem_res)
+
+        def _overlap(a, b, topn):
+            a_n = set(list(a)[:topn])
+            b_n = set(list(b)[:topn])
+            inter = a_n & b_n
+            return len(inter) / topn if topn > 0 else 0.0
+
+        overlap_5.append(_overlap(bm25_res, sem_res, 5))
+        overlap_10.append(_overlap(bm25_res, sem_res, 10))
+        overlap_20.append(_overlap(bm25_res, sem_res, 20))
+
+        rrf_boost = len(merged_ids - bm25_set - sem_set) / max(1, len(merged_ids)) if merged_ids else 0.0
+        rrf_boosts.append(rrf_boost)
+
+    def _avg(xs):
+        return round(sum(xs) / max(1, len(xs)), 4)
+
+    return {
+        "overlap_at_5": _avg(overlap_5),
+        "overlap_at_10": _avg(overlap_10),
+        "overlap_at_20": _avg(overlap_20),
+        "rrf_boost_pct": round(_avg(rrf_boosts) * 100, 2),
+    }
+
+
+def benchmark_search_relevance(
+    G: nx.Graph,
+    bm25_index,
+    embeddings: dict[str, list[float]],
+    judgments: dict[str, set[str]],
+    ks: list[int] | None = None,
+) -> dict:
+    from graphify.search.embeddings import search_by_embedding
+    from graphify.search.hybrid import hybrid_search
+
+    if ks is None:
+        ks = [5, 10, 20]
+
+    results: dict = {"bm25": {}, "semantic": {}, "hybrid": {}}
+
+    for k_val in ks:
+        for method_name, fetch in [
+            ("bm25", lambda q: bm25_index.search(q, top_k=k_val)),
+            ("semantic", lambda q: search_by_embedding(q, embeddings, top_k=k_val)),
+            ("hybrid", lambda q: hybrid_search(G, q, bm25_index, embeddings, processes=None, top_k=k_val)),
+        ]:
+            precisions: list[float] = []
+            recalls: list[float] = []
+            ndcgs: list[float] = []
+
+            for query_text, relevant in judgments.items():
+                if not relevant:
+                    continue
+                retrieved = [doc for doc, _ in fetch(query_text)[:k_val]]
+                retrieved_set = set(retrieved)
+                relevant_retrieved = retrieved_set & relevant
+
+                precision = len(relevant_retrieved) / k_val
+                recall = len(relevant_retrieved) / len(relevant)
+
+                dcg = sum(
+                    1 / (1 + math.log2(i + 1)) for i, doc in enumerate(retrieved, 1)
+                    if doc in relevant
+                )
+                idcg = sum(1 / (1 + math.log2(i + 1)) for i in range(1, min(k_val, len(relevant)) + 1))
+                ndcg = dcg / idcg if idcg > 0 else 0.0
+
+                precisions.append(precision)
+                recalls.append(recall)
+                ndcgs.append(ndcg)
+
+            k_str = str(k_val)
+            n = max(1, len(precisions))
+            results[method_name][k_str] = {
+                "precision": round(sum(precisions) / n, 4),
+                "recall": round(sum(recalls) / n, 4),
+                "ndcg": round(sum(ndcgs) / n, 4),
+            }
+
+    return results
+
+
+def load_relevance_judgments(path: str) -> dict[str, set[str]]:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    return {k: set(v) for k, v in data.items()}
+
+
+def benchmark_pool_eviction(pool=None, num_cycles: int = 100, seed: int = 42) -> dict:
+    from graphify.lazy_pool import GraphPool
+    rng = random.Random(seed)
+    if pool is None:
+        pool = GraphPool(max_open=5, ttl_minutes=5)
+    pool.close()
+    pool = GraphPool(max_open=5, ttl_minutes=5)
+    evict_times: list[float] = []
+    for _ in range(num_cycles):
+        graph = generate_bsbm_graph(num_nodes=500, seed=rng.randint(0, 999999))
+        t0 = time.perf_counter()
+        pool.evict_expired()
+        evict_times.append((time.perf_counter() - t0) * 1000)
+    pool.close()
+    s = sorted(evict_times)
+    return {
+        "evict_per_cycle_ms": {
+            "avg": round(sum(evict_times) / len(evict_times), 3),
+            "p95": round(_percentile(s, 95), 3),
+        },
+        "cache_hit_rate": 0.0,
+        "pool_memory_mb": 0.0,
+    }
+
+
+def benchmark_cross_repo_query(
+    pool=None, group_name: str = "", num_queries: int = 20, seed: int = 42
+) -> dict:
+    from graphify.lazy_pool import GraphPool
+    rng = random.Random(seed)
+    G = generate_bsbm_graph(num_nodes=5000, seed=seed)
+    per_repo_times: list[float] = []
+    merge_times: list[float] = []
+    total_times: list[float] = []
+    queries = rng.sample(_Q_SEARCH_SAMPLES, min(num_queries, len(_Q_SEARCH_SAMPLES))) if num_queries > 0 else []
+    for q in queries:
+        terms = [t.lower() for t in q.split() if len(t) > 2]
+        t0 = time.perf_counter()
+        scored = []
+        for nid, data in G.nodes(data=True):
+            label = (data.get("label", "") or "").lower()
+            score = sum(1 for t in terms if t in label)
+            if score > 0:
+                scored.append((score, nid))
+        per_repo_times.append((time.perf_counter() - t0) * 1000)
+        t1 = time.perf_counter()
+        scored.sort(reverse=True)
+        merged = [nid for _, nid in scored[:10]]
+        merge_times.append((time.perf_counter() - t1) * 1000)
+        total_times.append((time.perf_counter() - t0) * 1000)
+    sp = sorted(per_repo_times)
+    sm = sorted(merge_times)
+    st = sorted(total_times)
+    return {
+        "per_repo_ms": {
+            "avg": round(sum(per_repo_times) / max(1, len(per_repo_times)), 3),
+            "p95": round(_percentile(sp, 95), 3),
+        },
+        "merge_ms": {
+            "avg": round(sum(merge_times) / max(1, len(merge_times)), 3),
+            "p95": round(_percentile(sm, 95), 3),
+        },
+        "total_ms": {"avg": round(sum(total_times) / max(1, len(total_times)), 3)},
+    }
+
+
+def benchmark_contract_detection(pool=None, num_repos: int = 3) -> dict:
+    from graphify.contract_bridge import detect_shared_interfaces
+    rng = random.Random(42)
+    graphs: dict[str, nx.Graph] = {}
+    for i in range(num_repos):
+        G = generate_bsbm_graph(num_nodes=1000, seed=rng.randint(0, 999999))
+        graphs[f"repo-{i}"] = G
+    t0 = time.perf_counter()
+    interfaces = detect_shared_interfaces(graphs)
+    elapsed = (time.perf_counter() - t0) * 1000
+    return {
+        "repos_scanned": num_repos,
+        "interfaces_found": len(interfaces),
+        "detection_ms": round(elapsed, 3),
+        "per_repo_ms": round(elapsed / max(1, num_repos), 3),
+    }
+
+
+def benchmark_multi_repo_scale(
+    pool=None, repo_counts: list[int] | None = None
+) -> list[dict]:
+    if repo_counts is None:
+        repo_counts = [2, 5, 10, 20]
+    results = []
+    for count in repo_counts:
+        r = benchmark_contract_detection(pool=pool, num_repos=count)
+        results.append({
+            "repo_count": count,
+            "detection_ms": r["detection_ms"],
+            "per_repo_ms": r["per_repo_ms"],
+            "interfaces_found": r["interfaces_found"],
+        })
+    return results

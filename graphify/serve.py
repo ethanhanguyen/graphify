@@ -10,6 +10,30 @@ from graphify.query_planner import select_start_nodes_by_degree, order_frontier_
 from graphify.query_cache import cache_key, get_cached_query, set_cached_query
 from graphify.matviews import check_materialized_path
 from graphify.approx import sample_subgraph, _should_skip_query, build_path_bloom_filter
+from graphify.search.bm25 import BM25Index
+from graphify.search.embeddings import generate_embeddings, load_embeddings, search_by_embedding
+from graphify.search.hybrid import hybrid_search
+
+_bm25_index: BM25Index | None = None
+_embeddings_cache: dict[str, list[float]] | None = None
+_embeddings_loaded: bool = False
+
+
+def _lazy_init_search(G) -> tuple[BM25Index, dict[str, list[float]]]:
+    global _bm25_index, _embeddings_cache, _embeddings_loaded
+    if _bm25_index is not None and _embeddings_loaded:
+        return _bm25_index, _embeddings_cache or {}
+    if _bm25_index is None:
+        _bm25_index = BM25Index()
+        _bm25_index.index_from_graph(G)
+    if not _embeddings_loaded:
+        emb_dir = Path("graphify-out/embeddings")
+        if emb_dir.exists():
+            _embeddings_cache = load_embeddings(emb_dir)
+        else:
+            _embeddings_cache = generate_embeddings(G)
+        _embeddings_loaded = True
+    return _bm25_index, _embeddings_cache or {}
 
 
 def _load_graph(graph_path: str) -> nx.Graph:
@@ -306,6 +330,33 @@ def _subgraph_to_text(G: nx.Graph, nodes: set[str], edges: list[tuple], token_bu
     return output
 
 
+def _hybrid_search_to_text(G: nx.Graph, results: list[tuple[str, float]], budget: int) -> str:
+    lines = [f"Hybrid search | {len(results)} results found", ""]
+    char_budget = budget * 3
+    for nid, score in results[:20]:
+        d = G.nodes.get(nid, {})
+        label = d.get("label", nid)
+        nt = d.get("node_type", d.get("file_type", ""))
+        src = d.get("source_file", "")
+        loc = d.get("source_location", "")
+        sig = d.get("signature", "")
+        doc = d.get("docstring", "")
+        parts = [f"NODE {sanitize_label(label)} [{nt}] score={round(score, 5)}"]
+        if src:
+            parts.append(f"src={src}")
+        if loc:
+            parts.append(f"loc={loc}")
+        if sig:
+            parts.append(f"sig={sig[:80]}")
+        if doc:
+            parts.append(f"doc={doc[:120]}")
+        lines.append(" ".join(parts))
+    output = "\n".join(lines)
+    if len(output) > char_budget:
+        output = output[:char_budget] + f"\n... (truncated to ~{budget} token budget)"
+    return output
+
+
 def _find_node(G: nx.Graph, label: str) -> list[str]:
     """Return node IDs whose label or ID matches the search term (diacritic-insensitive)."""
     term = _strip_diacritics(label).lower()
@@ -363,19 +414,37 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         return [
             types.Tool(
                 name="query_graph",
-                description="Search the knowledge graph using BFS or DFS. Returns relevant nodes and edges as text context.",
+                description="Search the knowledge graph using hybrid (BM25 + semantic + RRF), BFS, or DFS. Default: hybrid. Returns relevant nodes and edges as text context.",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "question": {"type": "string", "description": "Natural language question or keyword search"},
-                         "mode": {"type": "string", "enum": ["bfs", "dfs", "bidirectional", "astar"], "default": "bfs",
-                                  "description": "bfs=broad context, dfs=trace a specific path, bidirectional=path finding, astar=community-aware path"},
+                         "mode": {"type": "string", "enum": ["hybrid", "bfs", "dfs", "bidirectional", "astar"], "default": "hybrid",
+                                  "description": "hybrid=BM25+semantic+RRF (default), bfs=broad context, dfs=trace a specific path, bidirectional=path finding, astar=community-aware path"},
                         "depth": {"type": "integer", "default": 3, "description": "Traversal depth (1-6)"},
                         "token_budget": {"type": "integer", "default": 2000, "description": "Max output tokens"},
                         "use_cache": {"type": "boolean", "default": True, "description": "Use query result cache"},
                         "prefer": {"type": "string", "enum": ["extracted", "inferred", "all"], "default": "extracted",
                                    "description": "Edge confidence preference for traversal order"},
                         "materialize": {"type": "boolean", "default": False, "description": "Use planned BFS with confidence ordering"},
+                        "approximate": {"type": "boolean", "default": False, "description": "Query a sampled subgraph (~10x faster, ~90% accuracy)"},
+                        "sample_rate": {"type": "number", "default": 0.1, "description": "Fraction of graph to sample when approximate=True (0.01-1.0)"},
+                    },
+                    "required": ["question"],
+                },
+            ),
+            types.Tool(
+                name="query",
+                description="Alias for query_graph with hybrid search default. BM25 keyword + semantic vector + RRF fusion search.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string", "description": "Natural language question or keyword search"},
+                        "mode": {"type": "string", "enum": ["hybrid", "bfs", "dfs", "bidirectional", "astar"], "default": "hybrid",
+                                 "description": "Search mode. Default: hybrid (BM25 + semantic + RRF)"},
+                        "depth": {"type": "integer", "default": 3, "description": "Traversal depth (1-6, non-hybrid modes)"},
+                        "token_budget": {"type": "integer", "default": 2000, "description": "Max output tokens"},
+                        "use_cache": {"type": "boolean", "default": True, "description": "Use query result cache"},
                         "approximate": {"type": "boolean", "default": False, "description": "Query a sampled subgraph (~10x faster, ~90% accuracy)"},
                         "sample_rate": {"type": "number", "default": 0.1, "description": "Fraction of graph to sample when approximate=True (0.01-1.0)"},
                     },
@@ -438,11 +507,99 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
                     "required": ["source", "target"],
                 },
             ),
+            types.Tool(
+                name="context",
+                description="360-degree symbol view: incoming/outgoing calls, definition, and process membership.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Symbol name to look up"},
+                    },
+                    "required": ["name"],
+                },
+            ),
+            types.Tool(
+                name="impact",
+                description="Blast radius analysis: what would be affected by a change to the target symbol.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "target": {"type": "string", "description": "Target symbol or class name"},
+                        "direction": {"type": "string", "enum": ["upstream", "downstream", "both"], "default": "both",
+                                      "description": "Direction to traverse call graph"},
+                        "minConfidence": {"type": "number", "default": 0.0,
+                                         "description": "Minimum confidence score (0-1)"},
+                    },
+                    "required": ["target"],
+                },
+            ),
+            types.Tool(
+                name="detect_changes",
+                description="Detect impact of file changes on processes. Pass 'scope' with comma-separated file paths.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "scope": {"type": "string", "default": "all",
+                                 "description": "Comma-separated list of changed file paths, or 'all'"},
+                    },
+                    "required": [],
+                },
+            ),
+            types.Tool(
+                name="group_list",
+                description="List all configured repository groups with member counts.",
+                inputSchema={"type": "object", "properties": {}, "required": []},
+            ),
+            types.Tool(
+                name="group_sync",
+                description="Sync cross-repo contracts and bridges for a group.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Group name"},
+                    },
+                    "required": ["name"],
+                },
+            ),
+            types.Tool(
+                name="group_contracts",
+                description="Show shared interfaces and cross-repo links for a group.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Group name"},
+                    },
+                    "required": ["name"],
+                },
+            ),
+            types.Tool(
+                name="group_query",
+                description="Search across all repos in a group and merge results.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Group name"},
+                        "query": {"type": "string", "description": "Search query"},
+                    },
+                    "required": ["name", "query"],
+                },
+            ),
+            types.Tool(
+                name="group_status",
+                description="Check staleness and stats for all repos in a group.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Group name"},
+                    },
+                    "required": ["name"],
+                },
+            ),
         ]
 
     def _tool_query_graph(arguments: dict) -> str:
         question = arguments["question"]
-        mode = arguments.get("mode", "bfs")
+        mode = arguments.get("mode", "hybrid")
         depth = min(int(arguments.get("depth", 3)), 6)
         budget = int(arguments.get("token_budget", 2000))
         use_cache = arguments.get("use_cache", True)
@@ -450,6 +607,26 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         materialize = arguments.get("materialize", False)
         approximate = arguments.get("approximate", False)
         sample_rate = float(arguments.get("sample_rate", 0.1))
+
+        if mode == "hybrid":
+            use_cache_b = arguments.get("use_cache", True)
+            cache_dir = Path("graphify-out/query_cache")
+            key = cache_key(question, mode, depth, budget)
+            if use_cache_b:
+                cached = get_cached_query(cache_dir, key)
+                if cached is not None:
+                    return cached
+            bm25, emb = _lazy_init_search(G)
+            results = hybrid_search(G, question, bm25, emb, processes=None, top_k=20)
+            if not results:
+                result = "No matching nodes found."
+                if use_cache_b:
+                    set_cached_query(cache_dir, key, result)
+                return result
+            result = _hybrid_search_to_text(G, results, budget)
+            if use_cache_b:
+                set_cached_query(cache_dir, key, result)
+            return result
 
         if approximate:
             cache_dir = Path("graphify-out/query_cache")
@@ -679,14 +856,227 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
             segments.append(f"--{rel}{conf_str}--> {G.nodes[v].get('label', v)}")
         return f"Shortest path ({hops} hops):\n  " + " ".join(segments)
 
+    def _tool_context(arguments: dict) -> str:
+        name = arguments["name"]
+        matches = _find_node(G, name)
+        if not matches:
+            return f"No symbol matching '{name}' found."
+        nid = matches[0]
+        d = G.nodes[nid]
+        lines = [
+            f"symbol:",
+            f"  kind: {d.get('node_type', d.get('file_type', 'unknown'))}",
+            f"  file: {d.get('source_file', '')}",
+            f"  line: {d.get('source_location', '')}",
+            f"  signature: {d.get('signature', '')}",
+            f"  visibility: {d.get('visibility', 'public')}",
+            f"incoming:",
+        ]
+        incoming_calls: list[str] = []
+        imported_by: list[str] = []
+        for neighbor in G.neighbors(nid):
+            edge_data = G.edges[neighbor, nid] if G.has_edge(neighbor, nid) else G.edges.get((neighbor, nid), {})
+            rel = edge_data.get("relation", "")
+            if rel == "calls":
+                incoming_calls.append(f"  - {G.nodes[neighbor].get('label', neighbor)} [{edge_data.get('confidence', '')}]")
+            elif rel in ("imports", "imports_from"):
+                imported_by.append(f"  - {G.nodes[neighbor].get('label', neighbor)} [{edge_data.get('confidence', '')}]")
+        if incoming_calls:
+            lines.append("  calls:")
+            lines.extend(incoming_calls)
+        if imported_by:
+            lines.append("  imports:")
+            lines.extend(imported_by)
+        if not incoming_calls and not imported_by:
+            lines.append("  (none)")
+        lines.append("outgoing:")
+        outgoing_calls: list[str] = []
+        processes: list[str] = []
+        for neighbor in G.neighbors(nid):
+            edge_data = G.edges[nid, neighbor]
+            rel = edge_data.get("relation", "")
+            if rel == "calls":
+                outgoing_calls.append(f"  - {G.nodes[neighbor].get('label', neighbor)} [{edge_data.get('confidence', '')}]")
+            elif rel == "step_in_process":
+                processes.append(f"  - {G.nodes[neighbor].get('label', neighbor)}")
+        if outgoing_calls:
+            lines.append("  calls:")
+            lines.extend(outgoing_calls)
+        if processes:
+            lines.append("  processes:")
+            lines.extend(processes)
+        if not outgoing_calls and not processes:
+            lines.append("  (none)")
+        return "\n".join(lines)
+
+    def _tool_impact(arguments: dict) -> str:
+        target = arguments["target"]
+        direction = arguments.get("direction", "both")
+        min_conf = float(arguments.get("minConfidence", 0.0))
+        matches = _find_node(G, target)
+        if not matches:
+            return f"No symbol matching '{target}' found."
+        nid = matches[0]
+        d = G.nodes[nid]
+        upstream: dict[int, list[dict]] = {}
+        downstream: dict[int, list[dict]] = {}
+
+        def _bfs_calls(start: str, reverse: bool, max_depth: int = 5) -> dict[int, list[dict]]:
+            result: dict[int, list[dict]] = {}
+            visited: set[str] = {start}
+            frontier = [start]
+            for depth in range(1, max_depth + 1):
+                next_frontier: list[str] = []
+                layer: list[dict] = []
+                for node in frontier:
+                    neighbors = G.predecessors(node) if reverse and G.is_directed() else G.neighbors(node)
+                    for nb in neighbors:
+                        if nb in visited:
+                            continue
+                        if reverse:
+                            edge_data = G.edges[nb, node]
+                        else:
+                            edge_data = G.edges[node, nb]
+                        rel = edge_data.get("relation", "")
+                        if rel != "calls":
+                            continue
+                        conf_score = edge_data.get("confidence_score", 1.0)
+                        if conf_score < min_conf:
+                            continue
+                        visited.add(nb)
+                        next_frontier.append(nb)
+                        layer.append({
+                            "symbol": G.nodes[nb].get("label", nb),
+                            "relation": rel,
+                            "confidence": edge_data.get("confidence", ""),
+                            "file": G.nodes[nb].get("source_file", ""),
+                        })
+                if layer:
+                    result[depth] = layer
+                if not next_frontier:
+                    break
+                frontier = next_frontier
+            return result
+
+        if direction in ("upstream", "both"):
+            upstream = _bfs_calls(nid, reverse=True)
+        if direction in ("downstream", "both"):
+            downstream = _bfs_calls(nid, reverse=False)
+
+        total_affected = sum(len(v) for v in upstream.values()) + sum(len(v) for v in downstream.values())
+        risk = "HIGH" if total_affected > 20 else "MEDIUM" if total_affected > 5 else "LOW"
+
+        lines = [
+            f"target:",
+            f"  kind: {d.get('node_type', d.get('file_type', 'unknown'))}",
+            f"  file: {d.get('source_file', '')}",
+            f"upstream:",
+        ]
+        if upstream:
+            for depth in sorted(upstream):
+                lines.append(f"  depth_{depth}:")
+                for item in upstream[depth]:
+                    lines.append(f"    - {item['symbol']} [{item['relation']}] [{item['confidence']}] {item['file']}")
+        else:
+            lines.append("  (none)")
+        lines.append("downstream:")
+        if downstream:
+            for depth in sorted(downstream):
+                lines.append(f"  depth_{depth}:")
+                for item in downstream[depth]:
+                    lines.append(f"    - {item['symbol']} [{item['relation']}] [{item['confidence']}] {item['file']}")
+        else:
+            lines.append("  (none)")
+        lines.append(f"summary:")
+        lines.append(f"  total_affected: {total_affected}")
+        lines.append(f"  risk_level: {risk}")
+        lines.append(f"  affected_processes: []")
+        return "\n".join(lines)
+
+    def _tool_detect_changes(arguments: dict) -> str:
+        from graphify.processes import build_processes, detect_changes
+        scope = arguments.get("scope", "all")
+        if scope == "all":
+            changed_files = []
+        else:
+            changed_files = [f.strip() for f in scope.split(",") if f.strip()]
+        processes = build_processes(G)
+        result = detect_changes(G, processes, changed_files=changed_files)
+        return json.dumps(result, indent=2, default=str)
+
+    def _tool_group_list(_: dict) -> str:
+        from graphify.groups import list_groups, get_group_repos
+        groups = list_groups()
+        if not groups:
+            return "No groups configured."
+        lines = ["Repository Groups:"]
+        for g in groups:
+            repos = get_group_repos(g)
+            lines.append(f"  {g}: {len(repos)} repos")
+        return "\n".join(lines)
+
+    def _tool_group_sync(arguments: dict) -> str:
+        from graphify.groups import sync_group
+        result = sync_group(arguments["name"])
+        return json.dumps(result, indent=2)
+
+    def _tool_group_contracts(arguments: dict) -> str:
+        from graphify.groups import get_group_repos
+        from graphify.lazy_pool import GraphPool
+        from graphify.contract_bridge import detect_shared_interfaces
+        name = arguments["name"]
+        repos = get_group_repos(name)
+        pool = GraphPool()
+        graphs: dict = {}
+        for rid in repos:
+            g = pool.get_graph(rid)
+            if g is not None:
+                graphs[rid] = g
+        pool.close()
+        interfaces = detect_shared_interfaces(graphs)
+        if not interfaces:
+            return f"No shared interfaces found across repos in group '{name}'."
+        lines = [f"Shared interfaces in group '{name}':"]
+        for iface in interfaces:
+            lines.append(f"  {iface['interface_name']}: {iface['repos']}")
+            if iface.get("methods"):
+                lines.append(f"    methods: {', '.join(iface['methods'])}")
+        return "\n".join(lines)
+
+    def _tool_group_query(arguments: dict) -> str:
+        from graphify.groups import query_group
+        result = query_group(arguments["name"], arguments["query"])
+        return json.dumps(result, indent=2)
+
+    def _tool_group_status(arguments: dict) -> str:
+        from graphify.groups import group_status
+        result = group_status(arguments["name"])
+        lines = [f"Group '{arguments['name']}' status:"]
+        for repo in result.get("repos", []):
+            stale_mark = " *STALE*" if repo.get("stale") else ""
+            lines.append(
+                f"  {repo['repo_id']}: {repo.get('nodes', 0)} nodes, {repo.get('edges', 0)} edges"
+                f" | indexed: {repo.get('last_indexed', 'never')}{stale_mark}"
+            )
+        return "\n".join(lines)
+
     _handlers = {
         "query_graph": _tool_query_graph,
+        "query": _tool_query_graph,
         "get_node": _tool_get_node,
         "get_neighbors": _tool_get_neighbors,
         "get_community": _tool_get_community,
         "god_nodes": _tool_god_nodes,
         "graph_stats": _tool_graph_stats,
         "shortest_path": _tool_shortest_path,
+        "context": _tool_context,
+        "impact": _tool_impact,
+        "detect_changes": _tool_detect_changes,
+        "group_list": _tool_group_list,
+        "group_sync": _tool_group_sync,
+        "group_contracts": _tool_group_contracts,
+        "group_query": _tool_group_query,
+        "group_status": _tool_group_status,
     }
 
     @server.call_tool()
