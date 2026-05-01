@@ -1178,7 +1178,7 @@ def main() -> None:
         if len(sys.argv) < 3:
             print("Usage: graphify query \"<question>\" [--dfs] [--budget N] [--graph path]", file=sys.stderr)
             sys.exit(1)
-        from graphify.serve import _score_nodes, _bfs, _dfs, _subgraph_to_text
+        from graphify.serve import _score_nodes, _bfs, _dfs, _subgraph_to_text, _load_graph_file
         from graphify.security import sanitize_label
         from networkx.readwrite import json_graph
         question = sys.argv[2]
@@ -1207,20 +1207,8 @@ def main() -> None:
             else:
                 i += 1
         gp = Path(graph_path).resolve()
-        if not gp.exists():
-            print(f"error: graph file not found: {gp}", file=sys.stderr)
-            sys.exit(1)
-        if not gp.suffix == ".json":
-            print(f"error: graph file must be a .json file", file=sys.stderr)
-            sys.exit(1)
         try:
-            import json as _json
-            import networkx as _nx
-            _raw = _json.loads(gp.read_text(encoding="utf-8"))
-            try:
-                G = json_graph.node_link_graph(_raw, edges="links")
-            except TypeError:
-                G = json_graph.node_link_graph(_raw)
+            G = _load_graph_file(gp)
         except Exception as exc:
             print(f"error: could not load graph: {exc}", file=sys.stderr)
             sys.exit(1)
@@ -1255,8 +1243,7 @@ def main() -> None:
         if len(sys.argv) < 4:
             print("Usage: graphify path \"<source>\" \"<target>\" [--graph path]", file=sys.stderr)
             sys.exit(1)
-        from graphify.serve import _score_nodes
-        from networkx.readwrite import json_graph
+        from graphify.serve import _score_nodes, _load_graph_file
         import networkx as _nx
         source_label = sys.argv[2]
         target_label = sys.argv[3]
@@ -1266,14 +1253,7 @@ def main() -> None:
             if a == "--graph" and i + 1 < len(args):
                 graph_path = args[i + 1]
         gp = Path(graph_path).resolve()
-        if not gp.exists():
-            print(f"error: graph file not found: {gp}", file=sys.stderr)
-            sys.exit(1)
-        _raw = json.loads(gp.read_text(encoding="utf-8"))
-        try:
-            G = json_graph.node_link_graph(_raw, edges="links")
-        except TypeError:
-            G = json_graph.node_link_graph(_raw)
+        G = _load_graph_file(gp)
         src_scored = _score_nodes(G, [t.lower() for t in source_label.split()])
         tgt_scored = _score_nodes(G, [t.lower() for t in target_label.split()])
         if not src_scored:
@@ -1305,8 +1285,7 @@ def main() -> None:
         if len(sys.argv) < 3:
             print("Usage: graphify explain \"<node>\" [--graph path]", file=sys.stderr)
             sys.exit(1)
-        from graphify.serve import _find_node
-        from networkx.readwrite import json_graph
+        from graphify.serve import _find_node, _load_graph_file
         label = sys.argv[2]
         graph_path = "graphify-out/graph.json"
         args = sys.argv[3:]
@@ -1314,14 +1293,7 @@ def main() -> None:
             if a == "--graph" and i + 1 < len(args):
                 graph_path = args[i + 1]
         gp = Path(graph_path).resolve()
-        if not gp.exists():
-            print(f"error: graph file not found: {gp}", file=sys.stderr)
-            sys.exit(1)
-        _raw = json.loads(gp.read_text(encoding="utf-8"))
-        try:
-            G = json_graph.node_link_graph(_raw, edges="links")
-        except TypeError:
-            G = json_graph.node_link_graph(_raw)
+        G = _load_graph_file(gp)
         matches = _find_node(G, label)
         if not matches:
             print(f"No node matching '{label}' found.")
@@ -1473,15 +1445,8 @@ def main() -> None:
                 graph_json = Path(args[i + 1]).resolve()
                 graph_flag_idx = i
         subcmd = sys.argv[3] if len(sys.argv) > 3 else "list"
-        if not graph_json.exists():
-            print(f"error: no graph found at {graph_json} — run /graphify first", file=sys.stderr)
-            sys.exit(1)
-        from networkx.readwrite import json_graph as _jg
-        _raw = json.loads(graph_json.read_text(encoding="utf-8"))
-        try:
-            G = _jg.node_link_graph(_raw, edges="links")
-        except TypeError:
-            G = _jg.node_link_graph(_raw)
+        from graphify.serve import _load_graph_file
+        G = _load_graph_file(graph_json)
         if subcmd == "list":
             try:
                 from graphify.entry_points import detect_entry_points, score_entry_points
@@ -1550,18 +1515,13 @@ def main() -> None:
     elif cmd == "cluster-only":
         watch_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(".")
         graph_json = watch_path / "graphify-out" / "graph.json"
-        if not graph_json.exists():
-            print(f"error: no graph found at {graph_json} — run /graphify first", file=sys.stderr)
-            sys.exit(1)
-        from networkx.readwrite import json_graph as _jg
-        from graphify.build import build_from_json
         from graphify.cluster import cluster, score_all
         from graphify.analyze import god_nodes, surprising_connections, suggest_questions
         from graphify.report import generate
         from graphify.export import to_json, to_html
+        from graphify.serve import _load_graph_file
         print("Loading existing graph...")
-        _raw = json.loads(graph_json.read_text(encoding="utf-8"))
-        G = build_from_json(_raw)
+        G = _load_graph_file(graph_json)
         print(f"Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
         print("Re-clustering...")
         communities = cluster(G)
@@ -1629,17 +1589,13 @@ def main() -> None:
             print("Usage: graphify merge-graphs <graph1.json> <graph2.json> [...] [--out merged.json]", file=sys.stderr)
             sys.exit(1)
         import networkx as _nx
-        from networkx.readwrite import json_graph as _jg
+        from graphify.serve import _load_graph_file
         graphs = []
         for gp in graph_paths:
             if not gp.exists():
                 print(f"error: not found: {gp}", file=sys.stderr)
                 sys.exit(1)
-            data = json.loads(gp.read_text(encoding="utf-8"))
-            try:
-                G = _jg.node_link_graph(data, edges="links")
-            except TypeError:
-                G = _jg.node_link_graph(data)
+            G = _load_graph_file(gp)
             # Tag every node with which repo it came from
             repo_tag = gp.parent.parent.name  # graphify-out/../ → repo dir name
             for node in G.nodes:

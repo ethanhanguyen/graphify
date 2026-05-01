@@ -11,19 +11,38 @@ from graphify.query_cache import get_cache, reseed_cache
 _CONFIDENCE_PRIORITY = {"EXTRACTED": 0, "INFERRED": 1, "AMBIGUOUS": 2}
 
 
+def _load_graph_file(graph_path: str | Path) -> nx.Graph:
+    p = Path(graph_path).resolve()
+    if not p.exists() and p.suffix == ".json":
+        gz = p.with_suffix(".json.gz")
+        if gz.exists():
+            p = gz
+    if not p.exists():
+        raise FileNotFoundError(f"Graph file not found: {p}")
+    is_gz = p.suffix == ".gz" or p.name.endswith(".json.gz")
+    try:
+        if is_gz:
+            import gzip
+            raw_bytes = gzip.decompress(p.read_bytes())
+            data = json.loads(raw_bytes.decode("utf-8"))
+        else:
+            raw_bytes = p.read_bytes()
+            try:
+                import orjson
+                data = orjson.loads(raw_bytes)
+            except ImportError:
+                data = json.loads(raw_bytes.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"graph.json is corrupted ({exc}). Re-run /graphify to rebuild.") from exc
+    try:
+        return json_graph.node_link_graph(data, edges="links")
+    except TypeError:
+        return json_graph.node_link_graph(data)
+
+
 def _load_graph(graph_path: str) -> nx.Graph:
     try:
-        resolved = Path(graph_path).resolve()
-        if resolved.suffix != ".json":
-            raise ValueError(f"Graph path must be a .json file, got: {graph_path!r}")
-        if not resolved.exists():
-            raise FileNotFoundError(f"Graph file not found: {resolved}")
-        safe = resolved
-        data = json.loads(safe.read_text(encoding="utf-8"))
-        try:
-            return json_graph.node_link_graph(data, edges="links")
-        except TypeError:
-            return json_graph.node_link_graph(data)
+        return _load_graph_file(graph_path)
     except (ValueError, FileNotFoundError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)

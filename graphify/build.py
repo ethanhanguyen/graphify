@@ -191,15 +191,11 @@ def build_merge(
     Never replaces — only grows (or prunes deleted-file nodes via prune_sources).
     Safe to call repeatedly: existing nodes and edges are preserved.
     """
-    from networkx.readwrite import json_graph as _jg
+    from graphify.serve import _load_graph_file
 
-    graph_path = Path(graph_path)
-    if graph_path.exists():
-        data = json.loads(graph_path.read_text(encoding="utf-8"))
-        try:
-            existing_G = _jg.node_link_graph(data, edges="links")
-        except TypeError:
-            existing_G = _jg.node_link_graph(data)
+    graph_path_obj = Path(graph_path)
+    if graph_path_obj.exists():
+        existing_G = _load_graph_file(graph_path_obj)
         # Reconstruct as a plain extraction dict so build() can merge it
         existing_nodes = [{"id": n, **existing_G.nodes[n]} for n in existing_G.nodes]
         existing_edges = [
@@ -223,7 +219,7 @@ def build_merge(
             print(f"[graphify] Pruned {len(to_remove)} node(s) from deleted sources.", file=sys.stderr)
 
     # Safety check: refuse to shrink the graph silently (#479)
-    if graph_path.exists():
+    if graph_path_obj.exists():
         existing_n = len(existing_nodes)
         new_n = G.number_of_nodes()
         if new_n < existing_n:
