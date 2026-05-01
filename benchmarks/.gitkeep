@@ -1,0 +1,2 @@
+# Benchmark snapshots — one JSON per PR
+# These are committed after each PR merges and become the regression baseline for subsequent PRs.

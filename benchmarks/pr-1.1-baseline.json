@@ -1,0 +1,14 @@
+{
+  "pr": "pr-1.1-baseline",
+  "timestamp": "2026-04-30T21:22:19",
+  "query_graph_p50": 0.1,
+  "query_graph_p95": 0.1,
+  "query_graph_avg": 0.1,
+  "shortest_path_p50": 0.0,
+  "shortest_path_avg": 0.0,
+  "nodes": 231,
+  "edges": 0,
+  "memory_mb": 0.2,
+  "line_coverage_pct": 0,
+  "branch_coverage_pct": 0
+}

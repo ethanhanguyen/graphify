@@ -1,0 +1,8 @@
+corpora/
+out-baseline/
+out-speedai/
+.venv-baseline/
+.venv-speedai/
+graphify-baseline/
+COMPARISON.md
+.tmp_*

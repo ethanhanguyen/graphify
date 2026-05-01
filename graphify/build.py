@@ -103,6 +103,7 @@ def build_from_json(extraction: dict, *, directed: bool = False) -> nx.Graph:
     hyperedges = extraction.get("hyperedges", [])
     if hyperedges:
         G.graph["hyperedges"] = hyperedges
+    G.graph["schema_version"] = 2
     return G
 
 

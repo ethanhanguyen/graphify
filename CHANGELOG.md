@@ -2,6 +2,31 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## Unreleased — Fork Epoch 1: Foundation
+
+### PR 1.1 — Fork + Baseline + Fixtures
+
+- `validation/ci-check.sh` — CI entrypoint: L1 (pytest), L2 (fixture graph build), L3 (regression against snapshot)
+- `.github/workflows/validate.yml` — PR validation workflow: runs `ci-check.sh`, comments pass/fail on PR
+- `benchmarks/runner.py` — Captures structured benchmark JSON after each PR to `benchmarks/pr-{name}.json`
+- `scripts/update-readme-table.py` — Regenerates README cumulative benchmark table from JSON snapshots
+- `tests/fixtures/{python,typescript,go,java}/` — 4-language fixture suite: 3 files each, exercises inheritance, imports, cross-file calls
+
+### PR 1.2 — Code Schema + Typed Indexing
+
+- `graphify/code_schema.py` — 44 node types, 21 edge types, 3 confidence tiers (EXTRACTED/INFERRED/AMBIGUOUS), schema_version=2
+- `graphify/code_emitter.py` — Fluent edge emission API with confidence-tiered methods (`calls()`, `inherits()`, `imports()`, `as_dicts()`)
+- `graphify/index.py` — EdgeTypeIndex (O(1) type lookup), NodeLabelTrie (prefix search), ConfidenceBitmap (edge-tier filtering), CompositeIndex
+
+### PR 1.3 — Advanced Traversal
+
+- `serve.py`: `_bidirectional_shortest_path` — O(b^(d/2)) with optional edge-type filtering
+- `serve.py`: `_weighted_dijkstra` — Confidence-weighted pathfinding
+- `serve.py`: `_astar` — Community-aware heuristic (prefer same-community nodes)
+- `serve.py`: `_select_best_start_node` — Selects lowest-degree candidate for optimal traversal
+- `serve.py`: `_prefer_extracted_edges` — Sorts BFS frontier by confidence tier
+- MCP `shortest_path` tool: new `algorithm` param (bidirectional/dijkstra/astar) + `edge_types` filter
+
 ## 0.5.6 (2026-04-30)
 
 - Fix: `NameError: name '_os' is not defined` crash after `graphify update` — this was fixed in v5 branch but not released to PyPI (#618, #612)

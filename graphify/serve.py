@@ -7,6 +7,8 @@ import networkx as nx
 from networkx.readwrite import json_graph
 from graphify.security import sanitize_label
 
+_CONFIDENCE_PRIORITY = {"EXTRACTED": 0, "INFERRED": 1, "AMBIGUOUS": 2}
+
 
 def _load_graph(graph_path: str) -> nx.Graph:
     try:
@@ -87,6 +89,197 @@ def _dfs(G: nx.Graph, start_nodes: list[str], depth: int) -> tuple[set[str], lis
                 stack.append((neighbor, d + 1))
                 edges_seen.append((node, neighbor))
     return visited, edges_seen
+
+
+def _select_best_start_node(G: nx.Graph, candidates: list[str]) -> str:
+    """Select the lowest-degree candidate node for optimal traversal performance."""
+    if not candidates:
+        return ""
+    return min(candidates, key=lambda n: G.degree(n))
+
+
+def _prefer_extracted_edges(G: nx.Graph, frontier: list[str]) -> list[str]:
+    """Sort frontier by confidence tier: EXTRACTED edges explored first."""
+    def _conf_prio(node):
+        min_prio = 2
+        for nb in G.neighbors(node):
+            e = G.edges.get((node, nb)) or G.edges.get((nb, node))
+            if e:
+                conf = e.get("confidence", "EXTRACTED")
+                min_prio = min(min_prio, _CONFIDENCE_PRIORITY.get(conf, 1))
+        return min_prio
+    return sorted(frontier, key=_conf_prio)
+
+
+def _bidirectional_shortest_path(
+    G: nx.Graph,
+    src: str,
+    tgt: str,
+    max_hops: int = 8,
+    edge_types: list[str] | None = None,
+) -> tuple[list[str], int]:
+    """Bidirectional BFS for O(b^(d/2)) shortest path finding.
+
+    Returns (path_nodes, hops) or ([], -1) if no path found.
+    When edge_types is provided, only traverses edges of those relation types.
+    """
+    if src == tgt:
+        return [src], 0
+
+    def _neighbors(node):
+        if edge_types:
+            for nb in G.neighbors(node):
+                e = G.edges.get((node, nb)) or G.edges.get((nb, node))
+                if e and e.get("relation", "") in edge_types:
+                    yield nb
+        else:
+            yield from G.neighbors(node)
+
+    fwd_visited: dict[str, str | None] = {src: None}
+    bwd_visited: dict[str, str | None] = {tgt: None}
+    fwd_frontier = {src}
+    bwd_frontier = {tgt}
+
+    for hops in range(max_hops + 1):
+        if len(fwd_frontier) <= len(bwd_frontier):
+            next_set: set[str] = set()
+            for node in fwd_frontier:
+                for nb in _neighbors(node):
+                    if nb not in fwd_visited:
+                        fwd_visited[nb] = node
+                        next_set.add(nb)
+                        if nb in bwd_visited:
+                            return _reconstruct_bidir_path(
+                                fwd_visited, bwd_visited, nb
+                            ), hops + 1
+            fwd_frontier = next_set
+        else:
+            next_set = set()
+            for node in bwd_frontier:
+                for nb in _neighbors(node):
+                    if nb not in bwd_visited:
+                        bwd_visited[nb] = node
+                        next_set.add(nb)
+                        if nb in fwd_visited:
+                            return _reconstruct_bidir_path(
+                                fwd_visited, bwd_visited, nb
+                            ), hops + 1
+            bwd_frontier = next_set
+    return [], -1
+
+
+def _reconstruct_bidir_path(
+    fwd: dict[str, str | None], bwd: dict[str, str | None], midpoint: str
+) -> list[str]:
+    path: list[str] = []
+    node = midpoint
+    while node is not None:
+        path.append(node)
+        node = fwd[node]
+    path.reverse()
+    node = bwd[midpoint]
+    while node is not None:
+        path.append(node)
+        node = bwd[node]
+    return path
+
+
+def _weighted_dijkstra(
+    G: nx.Graph,
+    src: str,
+    tgt: str,
+    weight_field: str = "confidence_score",
+) -> tuple[list[str], float]:
+    """Dijkstra with configurable weight field. Lower weight = preferred path."""
+    import heapq
+
+    if src not in G or tgt not in G:
+        return [], -1.0
+
+    dist: dict[str, float] = {src: 0}
+    prev: dict[str, str] = {}
+    pq = [(0.0, src)]
+
+    while pq:
+        d, node = heapq.heappop(pq)
+        if node == tgt:
+            path = []
+            while node in prev:
+                path.append(node)
+                node = prev[node]
+            path.append(src)
+            path.reverse()
+            return path, d
+        if d > dist.get(node, float("inf")):
+            continue
+        for nb in G.neighbors(node):
+            edata = G.get_edge_data(node, nb)
+            if edata:
+                w = 1.0 - edata.get(weight_field, 0.5)
+                w = max(w, 0.01)
+            else:
+                w = 0.5
+            nd = d + w
+            if nd < dist.get(nb, float("inf")):
+                dist[nb] = nd
+                prev[nb] = node
+                heapq.heappush(pq, (nd, nb))
+    return [], -1.0
+
+
+def _community_aware_heuristic(G: nx.Graph, node: str, tgt: str) -> float:
+    """Heuristic: prefer nodes in the same community as the target."""
+    tgt_comm = G.nodes[tgt].get("community")
+    node_comm = G.nodes[node].get("community")
+    if tgt_comm is not None and node_comm == tgt_comm:
+        return 0.0
+    return 1.0
+
+
+def _astar(
+    G: nx.Graph,
+    src: str,
+    tgt: str,
+    max_hops: int = 8,
+) -> tuple[list[str], int]:
+    """A* search with community-aware heuristic (fewer community hops = better)."""
+    import heapq
+
+    if src == tgt:
+        return [src], 0
+    if src not in G or tgt not in G:
+        return [], -1
+
+    g_score: dict[str, float] = {src: 0}
+    f_score: dict[str, float] = {src: _community_aware_heuristic(G, src, tgt)}
+    prev: dict[str, str] = {}
+    open_set = [(f_score[src], src)]
+    visited = set()
+
+    while open_set:
+        _, current = heapq.heappop(open_set)
+        if current in visited:
+            continue
+        visited.add(current)
+        if current == tgt:
+            path = []
+            node = current
+            while node in prev:
+                path.append(node)
+                node = prev[node]
+            path.append(src)
+            path.reverse()
+            return path, len(path) - 1
+        for nb in G.neighbors(current):
+            if nb in visited:
+                continue
+            tentative_g = g_score[current] + 1
+            if tentative_g < g_score.get(nb, float("inf")):
+                prev[nb] = current
+                g_score[nb] = tentative_g
+                f_score[nb] = tentative_g + _community_aware_heuristic(G, nb, tgt)
+                heapq.heappush(open_set, (f_score[nb], nb))
+    return [], -1
 
 
 def _subgraph_to_text(G: nx.Graph, nodes: set[str], edges: list[tuple], token_budget: int = 2000) -> str:
@@ -220,7 +413,7 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
                 inputSchema={"type": "object", "properties": {}},
             ),
             types.Tool(
-                name="shortest_path",
+                name=                "shortest_path",
                 description="Find the shortest path between two concepts in the knowledge graph.",
                 inputSchema={
                     "type": "object",
@@ -228,6 +421,10 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
                         "source": {"type": "string", "description": "Source concept label or keyword"},
                         "target": {"type": "string", "description": "Target concept label or keyword"},
                         "max_hops": {"type": "integer", "default": 8, "description": "Maximum hops to consider"},
+                        "algorithm": {"type": "string", "enum": ["bidirectional", "dijkstra", "astar"], "default": "bidirectional",
+                                      "description": "Pathfinding algorithm"},
+                        "edge_types": {"type": "array", "items": {"type": "string"},
+                                       "description": "Optional: restrict to these edge relation types"},
                     },
                     "required": ["source", "target"],
                 },
@@ -317,18 +514,37 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
             return f"No node matching source '{arguments['source']}' found."
         if not tgt_scored:
             return f"No node matching target '{arguments['target']}' found."
-        src_nid, tgt_nid = src_scored[0][1], tgt_scored[0][1]
+
+        src_nid = _select_best_start_node(G, [nid for _, nid in src_scored[:5]])
+        tgt_nid = _select_best_start_node(G, [nid for _, nid in tgt_scored[:5]])
+
         max_hops = int(arguments.get("max_hops", 8))
-        try:
-            path_nodes = nx.shortest_path(G, src_nid, tgt_nid)
-        except (nx.NetworkXNoPath, nx.NodeNotFound):
-            return f"No path found between '{G.nodes[src_nid].get('label', src_nid)}' and '{G.nodes[tgt_nid].get('label', tgt_nid)}'."
-        hops = len(path_nodes) - 1
-        if hops > max_hops:
-            return f"Path exceeds max_hops={max_hops} ({hops} hops found)."
+        algorithm = arguments.get("algorithm", "bidirectional")
+        edge_types = arguments.get("edge_types")
+
+        if algorithm == "dijkstra":
+            path, cost = _weighted_dijkstra(G, src_nid, tgt_nid)
+            hops = len(path) - 1 if path else -1
+            if hops < 0:
+                return f"No path found between '{G.nodes[src_nid].get('label', src_nid)}' and '{G.nodes[tgt_nid].get('label', tgt_nid)}'."
+            if hops > max_hops:
+                return f"Path exceeds max_hops={max_hops} ({hops} hops, cost={cost:.2f})."
+        elif algorithm == "astar":
+            path, hops = _astar(G, src_nid, tgt_nid, max_hops)
+            if hops < 0:
+                return f"No path found between '{G.nodes[src_nid].get('label', src_nid)}' and '{G.nodes[tgt_nid].get('label', tgt_nid)}'."
+            if hops > max_hops:
+                return f"Path exceeds max_hops={max_hops} ({hops} hops)."
+        else:
+            path, hops = _bidirectional_shortest_path(G, src_nid, tgt_nid, max_hops, edge_types)
+            if hops < 0:
+                return f"No path found between '{G.nodes[src_nid].get('label', src_nid)}' and '{G.nodes[tgt_nid].get('label', tgt_nid)}'."
+            if hops > max_hops:
+                return f"Path exceeds max_hops={max_hops} ({hops} hops)."
+
         segments = []
-        for i in range(len(path_nodes) - 1):
-            u, v = path_nodes[i], path_nodes[i + 1]
+        for i in range(len(path) - 1):
+            u, v = path[i], path[i + 1]
             edata = G.edges[u, v]
             rel = edata.get("relation", "")
             conf = edata.get("confidence", "")
@@ -336,7 +552,8 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
             if i == 0:
                 segments.append(G.nodes[u].get("label", u))
             segments.append(f"--{rel}{conf_str}--> {G.nodes[v].get('label', v)}")
-        return f"Shortest path ({hops} hops):\n  " + " ".join(segments)
+        algo_label = f" [{algorithm}]" if algorithm != "bidirectional" else ""
+        return f"Shortest path ({hops} hops{algo_label}):\n  " + " ".join(segments)
 
     _handlers = {
         "query_graph": _tool_query_graph,
