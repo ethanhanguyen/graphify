@@ -4,6 +4,14 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased — Fork Epoch 4: Performance & Correctness
 
+### PR 4.9 — Provenance-Gated Call Resolution
+
+- **BUGFIX** `graphify/call_dag.py` — `label_index` keys were relative `source_file` but `caller_file`/`resolved_path` were absolute → same-file check and import-based resolution never matched; all 200K+ resolutions came from the blind `global_callee_index` fallback. Fixed by using absolute file paths from `file_to_extraction` for `label_index` keys.
+- **QUALITY** `graphify/call_dag.py` — Removed blind global name-matching fallback (`global_callee_index.get(callee)`) that matched any `.get()` anywhere to any `.get()` anywhere. Replaced with same-directory provenance gate: callees must be in the same directory as the caller.
+- **QUALITY** `graphify/extract.py` — Raw-calls cross-file resolution gated with same-directory provenance check instead of blind global label matching.
+- **PERF** `graphify/extract.py` — `source_file` injected into each `per_file` entry during extraction loop, enabling directory-aware resolution.
+- Validation (VSCode 9,936 files): INFERRED edges 223,001 → 69,020 (-69%); total edges 415,661 → 244,106 (-41%); build time 150s → 95s (-37%); all ASSESS metrics PASS; god nodes return to domain-specific (`CommandCenter`, `NotebookEditorWidget`) from stdlib noise (`.get()`, `.push()`, `.map()`).
+
 ### PR 4.8 — Build Performance: 150s → 79s (-47%)
 
 - `graphify/entry_points.py` — `score_entry_points()`: O(N²) per-entry-point node scan replaced with pre-computed per-file stats (O(N) once). `_detect_structure_entry_points()`: eliminated redundant `get_edge_data` calls (O(degree) per node → O(1) per neighbor).

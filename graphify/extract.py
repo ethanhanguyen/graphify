@@ -3375,9 +3375,11 @@ def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
             continue
         cached = load_cached(path, cache_root or root)
         if cached is not None:
+            cached["source_file"] = str(path) if "source_file" not in cached else cached["source_file"]
             per_file.append(cached)
             continue
         result = extractor(path)
+        result["source_file"] = str(path)
         if "error" not in result:
             save_cached(path, result, cache_root or root)
         per_file.append(result)
@@ -3434,16 +3436,24 @@ def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
 
     # Cross-file call resolution for all languages
     # Each extractor saved unresolved calls in raw_calls. Now that we have all
-    # nodes from all files, resolve any callee that exists in another file.
+    # nodes from all files, resolve callees that exist in the same directory
+    # as the caller (provenance-gated to avoid false positives from blind
+    # name-matching across unrelated files).
     global_label_to_nid: dict[str, str] = {}
+    nid_to_source_file: dict[str, str] = {}
     for n in all_nodes:
         raw = n.get("label", "")
         normalised = raw.strip("()").lstrip(".")
         if normalised:
             global_label_to_nid[normalised.lower()] = n["id"]
+        sf = n.get("source_file", "")
+        if sf:
+            nid_to_source_file[n["id"]] = sf
 
     existing_pairs = {(e["source"], e["target"]) for e in all_edges}
     for result in per_file:
+        caller_file = result.get("source_file", "")
+        caller_dir = Path(caller_file).parent if caller_file else None
         for rc in result.get("raw_calls", []):
             callee = rc.get("callee", "")
             if not callee:
@@ -3453,6 +3463,13 @@ def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
             if rc.get("is_member_call"):
                 continue
             tgt = global_label_to_nid.get(callee.lower())
+            if tgt:
+                tgt_file = nid_to_source_file.get(tgt, "")
+                # Provenance gate: only allow callees from the same directory
+                if caller_dir and tgt_file:
+                    tgt_dir = Path(tgt_file).parent
+                    if caller_dir != tgt_dir:
+                        tgt = None
             caller = rc["caller_nid"]
             if tgt and tgt != caller and (caller, tgt) not in existing_pairs:
                 existing_pairs.add((caller, tgt))

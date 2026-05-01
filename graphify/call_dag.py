@@ -130,22 +130,20 @@ class CallResolutionDAG:
         self._scc_order = compute_scc_order(dep_graph)
 
         label_index: dict[str, dict[str, str]] = {}
-        global_callee_index: dict[str, str] = {}
-        # Inverted index: label -> [(file_key, nid)] for O(1) fallback lookup
         inverted_label_index: dict[str, list[tuple[str, str]]] = {}
-        for result in self.extractions:
+        for fp, result in file_to_extraction.items():
+            # Use absolute path keys so same-file (L171) and import
+            # resolution (L193) lookups actually match caller_file values.
             for node in result.get("nodes", []):
-                file_key = node.get("source_file", "")
-                label_index.setdefault(file_key, {})
+                label_index.setdefault(fp, {})
                 label = node.get("label", "").strip("()").lstrip(".").lower()
                 if label:
-                    label_index[file_key][label] = node["id"]
-                    global_callee_index.setdefault(label, node["id"])
-                    inverted_label_index.setdefault(label, []).append((file_key, node["id"]))
+                    label_index[fp][label] = node["id"]
+                    inverted_label_index.setdefault(label, []).append((fp, node["id"]))
 
         for cs in self.call_sites:
             callee = cs.callee_name.lower()
-            resolved_nid = self._resolve_callee_nid(cs, callee, label_index, import_map, global_callee_index, inverted_label_index)
+            resolved_nid = self._resolve_callee_nid(cs, callee, label_index, import_map, inverted_label_index)
             if resolved_nid:
                 self.edges.append(CallEdge(
                     source=cs.caller_nid,
@@ -163,7 +161,6 @@ class CallResolutionDAG:
         callee: str,
         label_index: dict[str, dict[str, str]],
         import_map: dict[str, dict[str, str]],
-        global_callee_index: dict[str, str] | None = None,
         inverted_label_index: dict[str, list[tuple[str, str]]] | None = None,
     ) -> str | None:
         caller_file = cs.caller_file
@@ -201,15 +198,13 @@ class CallResolutionDAG:
                     if callee == import_base:
                         continue
 
-        if global_callee_index:
-            nid = global_callee_index.get(callee)
-            if nid and nid != cs.caller_nid:
-                return nid
-
         if inverted_label_index:
             entries = inverted_label_index.get(callee, [])
+            caller_dir = Path(caller_file).parent
             for file_key, nid in entries:
-                if file_key != caller_file and nid != cs.caller_nid:
+                if file_key == caller_file or nid == cs.caller_nid:
+                    continue
+                if Path(file_key).parent == caller_dir:
                     return nid
 
         return None
