@@ -2,6 +2,42 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## Unreleased — Fork Epoch 2: Core Intelligence
+
+### PR 2.1 — Call Resolution Engine
+
+- `graphify/language_provider.py` — Abstract LanguageCallProvider base class + global provider registry for extensible language support
+- `graphify/imports.py` — 4-strategy import resolution (named, wildcard_leaf, wildcard_transitive, namespace) + import graph builder
+- `graphify/call_extractors/` — Per-language call site extractors for TypeScript, Python, Go, Java: identifier(), obj.method(), this.method(), super.method(), new Class()
+- `graphify/receiver.py` — Receiver inference: SelfInferrer, ConstructorInferrer, ChainInferrer, ImportInferrer
+- `graphify/mro.py` — MRO strategies: C3Linearization (Python), FirstWins (Java/C#/TS/Go), NoneMRO + class hierarchy builder
+- `graphify/cross_file.py` — File dependency graph construction, Tarjan SCC ordering, cross-file type propagation
+- `graphify/call_dag.py` — 6-stage CallResolutionDAG: Extract → Classify → InferReceiver → SelectDispatch → ResolveTarget → EmitEdge
+- `serve.py`: New `context({name})` MCP tool — 360° symbol view with incoming/outgoing calls and process membership
+- `serve.py`: New `impact({target})` MCP tool — blast radius analysis with depth groups and risk scoring
+
+### PR 2.2 — Process Tracing
+
+- `graphify/entry_points.py` — Entry point detection plugin system: FrameworkEntryPointDetector (Next.js, Express, Flask, FastAPI, CLI, Go main, tests, cron) + scoring
+- `graphify/processes.py` — Process tracing engine: BFS along CALLS edges, trace_process(), trace_all_entry_points(), trace_changed_nodes()
+- `graphify/process_cluster.py` — Process clustering: deduplicate near-identical traces (>90% overlap), merge clusters into canonical traces
+- `graphify/change_detect.py` — Change detection: git diff → affected symbols → affected processes → risk assessment (CRITICAL/HIGH/MEDIUM/LOW) + recommendations
+- `serve.py`: New `trace({entry_point})` MCP tool — full execution flow with step-by-step chain
+- `serve.py`: New `detect_changes({scope})` MCP tool — pre-commit impact analysis with recommendations
+- `build.py`: `enrich_by_language()` — post-build enrichment: runs call resolution + process tracing, writes STEP_IN_PROCESS edges and stats
+- CLI: `graphify processes list|trace|detect-changes` for offline analysis
+
+### PR 2.3 — Hybrid Search
+
+- `graphify/search/__init__.py` — SearchOrchestrator: parallel BM25 + semantic → RRF fusion → process-grouped results
+- `graphify/search/bm25.py` — BM25Index: keyword search on labels, file paths, and content with incremental updates
+- `graphify/search/embeddings.py` — EmbeddingIndex: semantic vector search (all-MiniLM-L6-v2 384D), SHA1 staleness detection, sharded storage, fallback to BM25-only when sentence-transformers unavailable
+- `graphify/search/fusion.py` — Reciprocal Rank Fusion (k=60) merging heterogeneous rankers
+- `graphify/search/grouping.py` — Process-grouped results using STEP_IN_PROCESS edges with cross-community detection
+- `serve.py`: `query_graph` default mode changed from `bfs` to `hybrid` (BM25 + semantic fusion)
+- `serve.py`: New `limit` parameter for hybrid search
+- `pyproject.toml`: Optional `[embeddings]` extra (sentence-transformers>=2.2.0) — embeddings are opt-in
+
 ## Unreleased — Fork Epoch 1: Foundation
 
 ### PR 1.1 — Fork + Baseline + Fixtures

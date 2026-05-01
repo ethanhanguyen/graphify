@@ -1002,6 +1002,11 @@ def main() -> None:
         print("  watch <path>            watch a folder and rebuild the graph on code changes")
         print("  update <path>           re-extract code files and update the graph (no LLM needed)")
         print("  cluster-only <path>     rerun clustering on an existing graph.json and regenerate report")
+        print("  processes <path>        list, trace, or detect changes in code processes")
+        print("    list                    list entry points")
+        print("    trace <name>            trace a specific process")
+        print("    detect-changes          detect uncommitted changes + affected processes")
+        print("    --graph <path>          path to graph.json (default graphify-out/graph.json)")
         print("  query \"<question>\"       BFS traversal of graph.json for a question")
         print("    --dfs                   use depth-first instead of breadth-first")
         print("    --budget N              cap output at N tokens (default 2000)")
@@ -1376,6 +1381,91 @@ def main() -> None:
         except ImportError as exc:
             print(f"error: {exc}", file=sys.stderr)
             sys.exit(1)
+
+    elif cmd == "processes":
+        watch_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(".")
+        graph_json = watch_path / "graphify-out" / "graph.json"
+        args = sys.argv[2:]
+        graph_flag_idx = None
+        for i, a in enumerate(args):
+            if a == "--graph" and i + 1 < len(args):
+                graph_json = Path(args[i + 1]).resolve()
+                graph_flag_idx = i
+        subcmd = sys.argv[3] if len(sys.argv) > 3 else "list"
+        if not graph_json.exists():
+            print(f"error: no graph found at {graph_json} — run /graphify first", file=sys.stderr)
+            sys.exit(1)
+        from networkx.readwrite import json_graph as _jg
+        _raw = json.loads(graph_json.read_text(encoding="utf-8"))
+        try:
+            G = _jg.node_link_graph(_raw, edges="links")
+        except TypeError:
+            G = _jg.node_link_graph(_raw)
+        if subcmd == "list":
+            try:
+                from graphify.entry_points import detect_entry_points, score_entry_points
+                from graphify.code_schema import LanguageProvider
+                extractions = []
+                ep = detect_entry_points(G, extractions, "python")
+                if not ep:
+                    ep = detect_entry_points(G, extractions, "typescript")
+                if not ep:
+                    ep = detect_entry_points(G, extractions, "go")
+                if not ep:
+                    ep = detect_entry_points(G, extractions, "java")
+                scored = score_entry_points(ep, G)
+                for ep_obj, score in scored[:20]:
+                    print(f"  {ep_obj.kind:8s} {score:.2f}  {ep_obj.name}  ({ep_obj.file}:{ep_obj.line})")
+            except ImportError:
+                print("Entry point detection not available.")
+        elif subcmd == "trace":
+            trace_name = sys.argv[4] if len(sys.argv) > 4 else ""
+            if not trace_name:
+                print("Usage: graphify processes <path> trace <name>", file=sys.stderr)
+                sys.exit(1)
+            try:
+                from graphify.entry_points import EntryPoint
+                from graphify.processes import trace_process
+                ep = None
+                for nid, ndata in G.nodes(data=True):
+                    if trace_name.lower() in (ndata.get("label", "")).lower():
+                        sl = ndata.get("source_location", "0")
+                        line = 0
+                        for c in sl:
+                            if c.isdigit():
+                                line = int(sl)
+                                break
+                        ep = EntryPoint(
+                            name=ndata.get("label", nid),
+                            kind="EVENT",
+                            file=ndata.get("source_file", ""),
+                            line=line,
+                            language=ndata.get("language", ""),
+                        )
+                        break
+                if not ep:
+                    print(f"No entry point matching '{trace_name}' found.", file=sys.stderr)
+                    sys.exit(1)
+                proc = trace_process(ep, G)
+                print(f"Process: {proc.name}")
+                print(f"  Steps: {proc.total_steps}, Max depth: {proc.max_depth}, Complexity: {proc.cyclomatic_complexity}")
+                for i, step in enumerate(proc.steps[:30]):
+                    print(f"    [{i}] depth={step.depth} {step.label} {step.file}:{step.line}")
+            except ImportError:
+                print("Process tracing not available.")
+        elif subcmd == "detect-changes":
+            try:
+                from graphify.change_detect import detect_changes as dc
+                report = dc(G, scope="all")
+                print(f"Risk: {report.risk_level}")
+                print(f"Changed symbols: {len(report.changed_symbols)}")
+                print(f"Affected processes: {len(report.affected_processes)}")
+                for rec in report.recommendations[:10]:
+                    print(f"  - {rec}")
+            except ImportError:
+                print("Change detection not available.")
+        else:
+            print("Usage: graphify processes <path> [list|trace <name>|detect-changes]", file=sys.stderr)
 
     elif cmd == "cluster-only":
         watch_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(".")

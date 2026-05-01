@@ -359,14 +359,15 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         return [
             types.Tool(
                 name="query_graph",
-                description="Search the knowledge graph using BFS or DFS. Returns relevant nodes and edges as text context.",
+                description="Search the knowledge graph using hybrid, BFS, or DFS. Default: hybrid (BM25+semantic).",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "question": {"type": "string", "description": "Natural language question or keyword search"},
-                        "mode": {"type": "string", "enum": ["bfs", "dfs"], "default": "bfs",
-                                 "description": "bfs=broad context, dfs=trace a specific path"},
-                        "depth": {"type": "integer", "default": 3, "description": "Traversal depth (1-6)"},
+                        "mode": {"type": "string", "enum": ["hybrid", "bfs", "dfs"], "default": "hybrid",
+                                 "description": "hybrid=BM25+semantic fusion, bfs=broad context, dfs=trace a specific path"},
+                        "depth": {"type": "integer", "default": 3, "description": "Traversal depth (1-6) for bfs/dfs modes"},
+                        "limit": {"type": "integer", "default": 10, "description": "Max results for hybrid mode"},
                         "token_budget": {"type": "integer", "default": 2000, "description": "Max output tokens"},
                     },
                     "required": ["question"],
@@ -429,13 +430,87 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
                     "required": ["source", "target"],
                 },
             ),
+            types.Tool(
+                name="context",
+                description="Get 360° context for a symbol: incoming/outgoing calls, imports, exports, and process membership.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"name": {"type": "string", "description": "Symbol name to look up"}},
+                    "required": ["name"],
+                },
+            ),
+            types.Tool(
+                name="impact",
+                description="Analyze blast radius: what depends on this symbol? Returns upstream/downstream impact with risk scoring.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "target": {"type": "string", "description": "Target symbol"},
+                        "direction": {"type": "string", "enum": ["upstream", "downstream", "both"], "default": "both"},
+                        "min_confidence": {"type": "number", "default": 0.5},
+                        "max_depth": {"type": "integer", "default": 5},
+                    },
+                    "required": ["target"],
+                },
+            ),
+            types.Tool(
+                name="trace",
+                description="Trace full execution flow from an entry point through all call chains.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "entry_point": {"type": "string", "description": "Entry point name to trace"},
+                        "max_depth": {"type": "integer", "default": 20},
+                    },
+                    "required": ["entry_point"],
+                },
+            ),
+            types.Tool(
+                name="detect_changes",
+                description="Detect code changes and identify affected symbols, processes, and risk level.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "scope": {"type": "string", "enum": ["all", "uncommitted"], "default": "all"},
+                    },
+                },
+            ),
         ]
 
     def _tool_query_graph(arguments: dict) -> str:
         question = arguments["question"]
-        mode = arguments.get("mode", "bfs")
+        mode = arguments.get("mode", "hybrid")
         depth = min(int(arguments.get("depth", 3)), 6)
         budget = int(arguments.get("token_budget", 2000))
+        limit = int(arguments.get("limit", 10))
+
+        if mode == "hybrid":
+            try:
+                from graphify.search import hybrid_search
+                results = hybrid_search(question, G, {"limit": limit})
+                processes = results.get("processes", [])
+                references = results.get("references", [])
+                orphaned = results.get("orphaned", [])
+                lines = [f"Hybrid search results for '{question}':\n"]
+                if processes:
+                    lines.append("## Process-Grouped Results")
+                    for p in processes[:5]:
+                        lines.append(f"  [{p.get('process_type', '')}] {p.get('summary', '')} (priority={p.get('priority_score', 0):.2f})")
+                        for sym in p.get("symbols", [])[:5]:
+                            lines.append(f"    - {sym.get('name', '?')} [{sym.get('type', '')}] {sym.get('file', '')}")
+                if references:
+                    lines.append(f"\n## References ({len(references)} results)")
+                    for ref in references[:limit]:
+                        lines.append(f"  - {ref.get('name', '?')} [{ref.get('type', '')}] {ref.get('file', '')}")
+                if orphaned:
+                    lines.append(f"\n## Other Results ({len(orphaned)} orphaned)")
+                    for o in orphaned[:5]:
+                        lines.append(f"  - {o.get('name', '?')} [{o.get('type', '')}]")
+                lines.append(f"\nTotal: {results.get('total_results', 0)} results")
+                return "\n".join(lines)
+            except ImportError:
+                mode = "bfs"
+
         terms = [t.lower() for t in question.split() if len(t) > 2]
         scored = _score_nodes(G, terms)
         start_nodes = [nid for _, nid in scored[:3]]
@@ -555,6 +630,230 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         algo_label = f" [{algorithm}]" if algorithm != "bidirectional" else ""
         return f"Shortest path ({hops} hops{algo_label}):\n  " + " ".join(segments)
 
+    def _tool_context(arguments: dict) -> str:
+        name = arguments["name"].lower()
+        matches = [(nid, d) for nid, d in G.nodes(data=True)
+                    if name in (d.get("label") or "").lower() or name == nid.lower()]
+        if not matches:
+            return f"No symbol matching '{arguments['name']}' found."
+        nid, d = matches[0]
+        lines = [
+            f"Symbol: {d.get('label', nid)}",
+            f"  Kind: {d.get('file_type', 'code')}",
+            f"  File: {d.get('source_file', '')} {d.get('source_location', '')}",
+            f"  Language: {d.get('language', '')}",
+        ]
+        incoming = []
+        outgoing = []
+        imports_list = []
+        for neighbor in G.neighbors(nid):
+            edge_data = G.get_edge_data(nid, neighbor) or G.get_edge_data(neighbor, nid)
+            if not edge_data or not isinstance(edge_data, dict):
+                continue
+            rel = edge_data.get("relation", "")
+            conf = edge_data.get("confidence", "")
+            src = edge_data.get("source", "")
+            if rel in ("calls", "CALLS"):
+                if nid == edge_data.get("target", ""):
+                    incoming.append((G.nodes[neighbor].get("label", neighbor),
+                                   edge_data.get("source_file", ""),
+                                   edge_data.get("source_location", ""),
+                                   conf))
+                else:
+                    outgoing.append((G.nodes[neighbor].get("label", neighbor),
+                                   edge_data.get("source_file", ""),
+                                   edge_data.get("source_location", ""),
+                                   conf))
+            elif rel in ("imports", "imports_from"):
+                imports_list.append((G.nodes[neighbor].get("label", neighbor), rel))
+        if incoming:
+            lines.append(f"\n  Incoming calls ({len(incoming)}):")
+            for label, f, loc, conf in incoming[:10]:
+                lines.append(f"    {label} [{conf}] {f}:{loc}")
+        if outgoing:
+            lines.append(f"\n  Outgoing calls ({len(outgoing)}):")
+            for label, f, loc, conf in outgoing[:10]:
+                lines.append(f"    {label} [{conf}] {f}:{loc}")
+        if imports_list:
+            lines.append(f"\n  Imports ({len(imports_list)}):")
+            for label, rel in imports_list[:5]:
+                lines.append(f"    {label} [{rel}]")
+        processes = []
+        for neighbor in G.neighbors(nid):
+            edge_data = G.get_edge_data(nid, neighbor) or G.get_edge_data(neighbor, nid)
+            if edge_data and isinstance(edge_data, dict) and edge_data.get("relation") == "step_in_process":
+                pn = edge_data.get("process_name", "")
+                si = edge_data.get("step_index", 0)
+                if pn:
+                    processes.append((pn, si))
+        if processes:
+            lines.append(f"\n  Process membership ({len(processes)}):")
+            for pn, si in processes[:5]:
+                lines.append(f"    {pn} (step {si})")
+        return "\n".join(lines)
+
+    def _tool_impact(arguments: dict) -> str:
+        target = arguments["target"].lower()
+        direction = arguments.get("direction", "both")
+        min_conf = float(arguments.get("min_confidence", 0.5))
+        max_depth = int(arguments.get("max_depth", 5))
+        matches = _find_node(G, target)
+        if not matches:
+            return f"No node matching '{arguments['target']}' found."
+        nid = matches[0]
+        label = G.nodes[nid].get("label", nid)
+        kind = G.nodes[nid].get("file_type", "code")
+        src_file = G.nodes[nid].get("source_file", "")
+
+        upstream = {}
+        downstream = {}
+        total_affected = 0
+
+        if direction in ("upstream", "both"):
+            visited = {nid}
+            frontier = {nid}
+            for d in range(1, max_depth + 1):
+                next_f = set()
+                level_nodes = []
+                for node in frontier:
+                    for neighbor in G.neighbors(node):
+                        edge_data = G.get_edge_data(neighbor, node)
+                        if not edge_data or not isinstance(edge_data, dict):
+                            continue
+                        rel = edge_data.get("relation", "")
+                        conf_score = edge_data.get("confidence_score", 0)
+                        if rel in ("calls", "CALLS", "depends_on") and conf_score >= min_conf:
+                            if neighbor not in visited:
+                                visited.add(neighbor)
+                                next_f.add(neighbor)
+                                nd = G.nodes[neighbor]
+                                level_nodes.append({
+                                    "name": nd.get("label", neighbor),
+                                    "file": nd.get("source_file", ""),
+                                    "confidence": edge_data.get("confidence", ""),
+                                })
+                if level_nodes:
+                    upstream[d] = level_nodes
+                frontier = next_f
+            total_affected += len(visited) - 1
+
+        if direction in ("downstream", "both"):
+            visited = {nid}
+            frontier = {nid}
+            for d in range(1, max_depth + 1):
+                next_f = set()
+                level_nodes = []
+                for node in frontier:
+                    for neighbor in G.neighbors(node):
+                        edge_data = G.get_edge_data(node, neighbor)
+                        if not edge_data or not isinstance(edge_data, dict):
+                            continue
+                        rel = edge_data.get("relation", "")
+                        conf_score = edge_data.get("confidence_score", 0)
+                        if rel in ("calls", "CALLS", "depends_on") and conf_score >= min_conf:
+                            if neighbor not in visited:
+                                visited.add(neighbor)
+                                next_f.add(neighbor)
+                                nd = G.nodes[neighbor]
+                                level_nodes.append({
+                                    "name": nd.get("label", neighbor),
+                                    "file": nd.get("source_file", ""),
+                                    "confidence": edge_data.get("confidence", ""),
+                                })
+                if level_nodes:
+                    downstream[d] = level_nodes
+                frontier = next_f
+            total_affected += len(visited) - 1
+
+        if total_affected > 50 and max_depth > 3:
+            risk = "CRITICAL"
+        elif total_affected > 10:
+            risk = "HIGH"
+        elif total_affected > 5:
+            risk = "MEDIUM"
+        else:
+            risk = "LOW"
+
+        lines = [
+            f"Impact analysis for: {label}",
+            f"  Kind: {kind}",
+            f"  File: {src_file}",
+            f"  Total affected: {total_affected}",
+            f"  Risk level: {risk}",
+        ]
+        if upstream:
+            lines.append(f"\n  Upstream (who depends on this):")
+            for depth, nodes in sorted(upstream.items()):
+                lines.append(f"    Depth {depth}:")
+                for n in nodes[:5]:
+                    lines.append(f"      - {n['name']} [{n.get('confidence', '')}] {n['file']}")
+        if downstream:
+            lines.append(f"\n  Downstream (this depends on):")
+            for depth, nodes in sorted(downstream.items()):
+                lines.append(f"    Depth {depth}:")
+                for n in nodes[:5]:
+                    lines.append(f"      - {n['name']} [{n.get('confidence', '')}] {n['file']}")
+        return "\n".join(lines)
+
+    def _tool_trace(arguments: dict) -> str:
+        entry = arguments["entry_point"]
+        max_depth = int(arguments.get("max_depth", 20))
+        try:
+            from graphify.entry_points import EntryPoint, detect_entry_points
+            from graphify.processes import trace_process
+            extractions = []  # we don't have extractsions in serve context
+            ep = None
+            for nid, ndata in G.nodes(data=True):
+                if entry.lower() in (ndata.get("label", "")).lower():
+                    sl = ndata.get("source_location", "0")
+                    try:
+                        line = int(next(c for c in sl if c.isdigit()) + "0" if any(c.isdigit() for c in sl) else 0)
+                    except Exception:
+                        line = 0
+                    ep = EntryPoint(
+                        name=ndata.get("label", nid),
+                        kind="EVENT",
+                        file=ndata.get("source_file", ""),
+                        line=line,
+                        language=ndata.get("language", ""),
+                    )
+                    break
+            if not ep:
+                return f"No entry point matching '{entry}' found."
+            proc = trace_process(ep, G, max_depth=max_depth)
+            lines = [
+                f"Process: {proc.name}",
+                f"  Entry point: {proc.entry_point.file}:{proc.entry_point.line}",
+                f"  Total steps: {proc.total_steps}",
+                f"  Max depth: {proc.max_depth}",
+                f"  Confidence: {proc.confidence:.2f}",
+                f"  Complexity: {proc.cyclomatic_complexity}",
+                f"  External touches: {proc.external_touches}",
+                f"\n  Steps:",
+            ]
+            for i, step in enumerate(proc.steps[:30]):
+                lines.append(f"    [{i}] depth={step.depth} {step.label} {step.file}:{step.line}")
+            if proc.total_steps > 30:
+                lines.append(f"    ... (+{proc.total_steps - 30} more steps)")
+            return "\n".join(lines)
+        except ImportError:
+            return "Process tracing not available."
+
+    def _tool_detect_changes(arguments: dict) -> str:
+        scope = arguments.get("scope", "all")
+        try:
+            from graphify.change_detect import detect_changes as dc
+            report = dc(G, scope=scope)
+            return (
+                f"Change Detection Report\n"
+                f"  Risk: {report.risk_level}\n"
+                f"  Changed symbols: {len(report.changed_symbols)}\n"
+                f"  Affected processes: {len(report.affected_processes)}\n\n"
+                f"  {chr(10).join(report.recommendations[:10])}"
+            )
+        except ImportError:
+            return "Change detection not available."
+
     _handlers = {
         "query_graph": _tool_query_graph,
         "get_node": _tool_get_node,
@@ -563,6 +862,10 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         "god_nodes": _tool_god_nodes,
         "graph_stats": _tool_graph_stats,
         "shortest_path": _tool_shortest_path,
+        "context": _tool_context,
+        "impact": _tool_impact,
+        "trace": _tool_trace,
+        "detect_changes": _tool_detect_changes,
     }
 
     @server.call_tool()

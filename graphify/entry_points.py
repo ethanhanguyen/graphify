@@ -1,0 +1,214 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import networkx as nx
+    from graphify.code_schema import TypedNode, TypedEdge
+
+_DETECTOR_REGISTRY: dict[str, FrameworkEntryPointDetector] = {}
+
+
+@dataclass
+class EntryPoint:
+    name: str
+    kind: str
+    file: str
+    line: int
+    language: str
+    framework: str = ""
+
+
+class EntryPointDetector:
+    def detect(self, graph: nx.Graph, extractions: list) -> list[EntryPoint]:
+        return []
+
+
+class FrameworkEntryPointDetector(EntryPointDetector):
+    _NEXTJS_ROUTE = re.compile(r"(page|route|layout|loading|error|not-found|template|default)\.(tsx?|jsx?|mjs)$")
+    _NEXTJS_ROUTE_DIR = re.compile(r"(api|app)/")
+    _EXPRESS_VERB = re.compile(r"\b(app|router)\.(get|post|put|delete|patch|use|all|head|options)\s*\(")
+    _FLASK_ROUTE = re.compile(r"@\w*\.(route|get|post|put|delete|patch)\s*\(")
+    _FLASK_APP_ROUTE = re.compile(r"@app\.(route|before_request|after_request|errorhandler)\s*\(")
+    _FASTAPI_ROUTE = re.compile(r"@(app|router)\.(get|post|put|delete|patch|head|options|websocket)\s*\(")
+    _CLI_MAIN = re.compile(r"^(def\s+main\b|func\s+main\b)", re.MULTILINE)
+    _CLI_MAIN_GUARD = re.compile(r"if\s+__name__\s*==\s*['\"]__main__['\"]")
+    _GO_MAIN = re.compile(r"\bfunc\s+main\s*\(")
+    _GO_INIT = re.compile(r"\bfunc\s+init\s*\(")
+    _TEST_DEF = re.compile(r"\bdef\s+test_\w+")
+    _TEST_JEST = re.compile(r"\b(it|describe|test)\s*\(")
+    _TEST_PYTEST = re.compile(r"\btest_\w+\s*=")
+    _TEST_GO = re.compile(r"\bfunc\s+Test\w+\s*\(")
+    _TEST_JUNIT = re.compile(r"@Test\b")
+    _CRON_DECORATOR = re.compile(r"@app\.(cron|schedule|task)")
+    _CRON_NODE = re.compile(r"\bnode-cron\b|cron\.schedule\s*\(")
+
+    def detect(self, graph: nx.Graph, extractions: list) -> list[EntryPoint]:
+        results: list[EntryPoint] = []
+        for node in extractions:
+            if not isinstance(node, dict):
+                continue
+            label = node.get("label", "")
+            src_file = node.get("source_file", "")
+            src_loc = node.get("source_location", "")
+            node_type = node.get("tree_sitter_type", "") or node.get("node_type", "")
+            language = node.get("language", "")
+
+            line = 0
+            if src_loc:
+                m = re.search(r"(\d+)", str(src_loc))
+                if m:
+                    line = int(m.group(1))
+
+            eps = self._detect_from_node(label, src_file, node_type, language, line)
+            results.extend(eps)
+        return list({(ep.name, ep.file, ep.line): ep for ep in results}.values())
+
+    def _detect_from_node(self, label: str, src_file: str, node_type: str, language: str, line: int) -> list[EntryPoint]:
+        results: list[EntryPoint] = []
+
+        if self._is_nextjs_route(src_file, node_type):
+            kind = "API" if "api/" in src_file.replace("\\", "/") or "route." in src_file.split("/")[-1] else "PAGE"
+            results.append(EntryPoint(
+                name=src_file.split("/")[-1].split(".")[0],
+                kind=kind, file=src_file, line=line,
+                language="typescript", framework="nextjs"
+            ))
+
+        if self._is_express_route(label, node_type):
+            results.append(EntryPoint(
+                name=label, kind="HTTP", file=src_file, line=line,
+                language="javascript", framework="express"
+            ))
+
+        if self._is_flask_route(label, node_type):
+            results.append(EntryPoint(
+                name=label, kind="HTTP", file=src_file, line=line,
+                language="python", framework="flask"
+            ))
+
+        if self._is_fastapi_route(label, node_type):
+            results.append(EntryPoint(
+                name=label, kind="HTTP", file=src_file, line=line,
+                language="python", framework="fastapi"
+            ))
+
+        if self._is_cli_main(label, node_type, src_file):
+            results.append(EntryPoint(
+                name=label, kind="CLI", file=src_file, line=line,
+                language=language, framework=""
+            ))
+
+        if self._is_go_main(label, node_type):
+            results.append(EntryPoint(
+                name="main", kind="CLI", file=src_file, line=line,
+                language="go", framework=""
+            ))
+
+        if self._is_go_init(label, node_type):
+            results.append(EntryPoint(
+                name="init", kind="EVENT", file=src_file, line=line,
+                language="go", framework=""
+            ))
+
+        if self._is_test(label, node_type):
+            results.append(EntryPoint(
+                name=label, kind="TEST", file=src_file, line=line,
+                language=language, framework=""
+            ))
+
+        if self._is_cron(label, node_type):
+            results.append(EntryPoint(
+                name=label, kind="CRON", file=src_file, line=line,
+                language=language, framework=""
+            ))
+
+        return results
+
+    def _is_nextjs_route(self, src_file: str, node_type: str) -> bool:
+        base = src_file.split("/")[-1] if src_file else ""
+        return bool(self._NEXTJS_ROUTE.search(base))
+
+    def _is_express_route(self, label: str, node_type: str) -> bool:
+        return bool(self._EXPRESS_VERB.search(label))
+
+    def _is_flask_route(self, label: str, node_type: str) -> bool:
+        return bool(self._FLASK_ROUTE.search(label)) or bool(self._FLASK_APP_ROUTE.search(label))
+
+    def _is_fastapi_route(self, label: str, node_type: str) -> bool:
+        return bool(self._FASTAPI_ROUTE.search(label))
+
+    def _is_cli_main(self, label: str, node_type: str, src_file: str) -> bool:
+        if self._CLI_MAIN_GUARD.search(label):
+            return True
+        if self._CLI_MAIN.search(label):
+            return True
+        return False
+
+    def _is_go_main(self, label: str, node_type: str) -> bool:
+        return bool(self._GO_MAIN.search(label))
+
+    def _is_go_init(self, label: str, node_type: str) -> bool:
+        return bool(self._GO_INIT.search(label))
+
+    def _is_test(self, label: str, node_type: str) -> bool:
+        return (bool(self._TEST_DEF.search(label))
+                or bool(self._TEST_JEST.search(label))
+                or bool(self._TEST_GO.search(label))
+                or bool(self._TEST_JUNIT.search(label)))
+
+    def _is_cron(self, label: str, node_type: str) -> bool:
+        return bool(self._CRON_DECORATOR.search(label)) or bool(self._CRON_NODE.search(label))
+
+
+def register_detector(framework_name: str, detector: FrameworkEntryPointDetector) -> None:
+    _DETECTOR_REGISTRY[framework_name] = detector
+
+
+def detect_entry_points(graph: nx.Graph, extractions: list, language: str = "") -> list[EntryPoint]:
+    default = FrameworkEntryPointDetector()
+    results: list[EntryPoint] = []
+    results.extend(default.detect(graph, extractions))
+    for fw, detector in _DETECTOR_REGISTRY.items():
+        results.extend(detector.detect(graph, extractions))
+    return list({(ep.name, ep.file, ep.line): ep for ep in results}.values())
+
+
+def score_entry_points(entry_points: list[EntryPoint], graph: nx.Graph) -> list[tuple[EntryPoint, float]]:
+    scored: list[tuple[EntryPoint, float]] = []
+    for ep in entry_points:
+        score = 0.0
+        for nid in graph.nodes:
+            ndata = graph.nodes[nid]
+            nfile = ndata.get("source_file", "")
+            nlabel = ndata.get("label", "")
+            if nfile == ep.file:
+                score += 1.0
+                if "main" in nlabel.lower() or "handler" in nlabel.lower():
+                    score += 1.0
+        node_id = _resolve_node_id(graph, ep)
+        if node_id:
+            degree = graph.degree(node_id) if node_id in graph else 0
+            score += degree * 0.5
+        kind_bonus = {"CLI": 2.0, "HTTP": 2.0, "CRON": 1.5, "TEST": 1.0, "EXPORT": 1.5, "EVENT": 1.0, "PAGE": 1.5}
+        score += kind_bonus.get(ep.kind, 0.0)
+        scored.append((ep, score))
+    max_score = max([s for _, s in scored], default=1.0)
+    if max_score > 0:
+        scored = [(ep, s / max_score) for ep, s in scored]
+    return sorted(scored, key=lambda x: x[1], reverse=True)
+
+
+def _resolve_node_id(graph: nx.Graph, ep: EntryPoint) -> str | None:
+    for nid, ndata in graph.nodes(data=True):
+        nfile = ndata.get("source_file", "")
+        nlabel = ndata.get("label", "")
+        if nfile == ep.file and ep.name.lower() in nlabel.lower():
+            return nid
+    for nid, ndata in graph.nodes(data=True):
+        nfile = ndata.get("source_file", "")
+        if nfile == ep.file:
+            return nid
+    return None

@@ -1,6 +1,6 @@
 # Graphify Fork + Code Intelligence — Progress Tracker
 
-> **Last updated:** 2026-04-30
+> **Last updated:** 2026-04-30 (PRs 2.1-2.3 complete)
 > **Started:** TBD
 > **Target completion:** 14-17 weeks
 
@@ -11,9 +11,9 @@
 | 1.1 | Fork + Baseline + Fixtures | 🟩 Complete | 0.5 | Prereq | 2026-04-30 | 2026-04-30 | 441 tests pass | — |
 | 1.2 | Code Schema + Typed Indexing | 🟩 Complete | 2-3 | Foundation | 2026-04-30 | 2026-04-30 | 441 tests pass | — |
 | 1.3 | Advanced Traversal | 🟩 Complete | 1 | High | 2026-04-30 | 2026-04-30 | 441 tests pass | — |
-| 2.1 | Call Resolution Engine | ⬜ Pending | 3-4 | **CRITICAL** | — | — | — | — |
-| 2.2 | Process Tracing | ⬜ Pending | 2-3 | **CRITICAL** | — | — | — | — |
-| 2.3 | Hybrid Search | ⬜ Pending | 2-3 | High | — | — | — | — |
+| 2.1 | Call Resolution Engine | 🟩 Complete | 3-4 | **CRITICAL** | 2026-04-30 | 2026-04-30 | 441 tests pass | — |
+| 2.2 | Process Tracing | 🟩 Complete | 2-3 | **CRITICAL** | 2026-04-30 | 2026-04-30 | 441 tests pass | — |
+| 2.3 | Hybrid Search | 🟩 Complete | 2-3 | High | 2026-04-30 | 2026-04-30 | 441 tests pass | — |
 | 3.1 | Caching + Agent Integration | ⬜ Pending | 2 | High | — | — | — | — |
 | 3.2 | Multi-Repo Groups | ⬜ Pending | 2-3 | Medium | — | — | — | — |
 | 3.3 | Final Benchmark + Upstream PR | ⬜ Pending | 0.5 | Validation | — | — | — | — |
@@ -173,46 +173,46 @@ Detailed per-PR tracking. Update immediately after each PR merges.
 
 | Field | Value |
 |---|---|
-| **Status:** | ⬜ Pending |
+| **Status:** | 🟩 Complete |
 | **Branch:** | — |
-| **Started:** | — |
-| **Completed:** | — |
+| **Started:** | 2026-04-30 |
+| **Completed:** | 2026-04-30 |
 | **Commit:** | — |
-| **Coverage:** | — |
+| **Coverage:** | 441 tests pass |
 | **Benchmark run:** | Update benchmark table above |
 | **Call resolution accuracy:** | TS: —%, Py: —%, Go: —%, Java: —%, Avg: —% |
 | **Issues found:** | — |
-| **Notes:** | — |
+| **Notes:** | Created language_provider.py, imports.py, call_extractors/{typescript,python,go,java}.py, receiver.py, mro.py, cross_file.py, call_dag.py. Added context + impact MCP tools to serve.py.
 
 ### PR 2.2 — Process Tracing
 
 | Field | Value |
 |---|---|
-| **Status:** | ⬜ Pending |
+| **Status:** | 🟩 Complete |
 | **Branch:** | — |
-| **Started:** | — |
-| **Completed:** | — |
+| **Started:** | 2026-04-30 |
+| **Completed:** | 2026-04-30 |
 | **Commit:** | — |
-| **Coverage:** | — |
+| **Coverage:** | 441 tests pass |
 | **Benchmark run:** | Update benchmark table above |
 | **Process trace completeness:** | —% |
 | **Issues found:** | — |
-| **Notes:** | — |
+| **Notes:** | Created entry_points.py, processes.py, process_cluster.py, change_detect.py. Added trace + detect_changes MCP tools to serve.py. Added `graphify processes` CLI. |
 
 ### PR 2.3 — Hybrid Search
 
 | Field | Value |
 |---|---|
-| **Status:** | ⬜ Pending |
+| **Status:** | 🟩 Complete |
 | **Branch:** | — |
-| **Started:** | — |
-| **Completed:** | — |
+| **Started:** | 2026-04-30 |
+| **Completed:** | 2026-04-30 |
 | **Commit:** | — |
-| **Coverage:** | — |
+| **Coverage:** | 441 tests pass |
 | **Benchmark run:** | Update benchmark table above |
 | **NDCG@10:** | — |
 | **Issues found:** | — |
-| **Notes:** | — |
+| **Notes:** | Created search/{__init__,bm25,embeddings,fusion,grouping}.py. Changed query_graph default from bfs to hybrid. Added embeddings optional dependency. |
 
 ### PR 3.1 — Caching + Agent Integration
 
