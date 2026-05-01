@@ -1,8 +1,15 @@
 corpora/
-out-baseline/
-out-speedai/
+runs/
+latest
 .venv-baseline/
+.venv-current/
 .venv-speedai/
 graphify-baseline/
+out-baseline/
+out-current/
+out-speedai/
+TIMELINE.md
 COMPARISON.md
+FEATURE_AUDIT.md
+CUMULATIVE.md
 .tmp_*

@@ -481,41 +481,6 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
                 },
             ),
             types.Tool(
-                name="context",
-                description="Get 360° context for a symbol: incoming/outgoing calls, imports, exports, and process membership.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {"name": {"type": "string", "description": "Symbol name to look up"}},
-                    "required": ["name"],
-                },
-            ),
-            types.Tool(
-                name="impact",
-                description="Analyze blast radius: what depends on this symbol? Returns upstream/downstream impact with risk scoring.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "target": {"type": "string", "description": "Target symbol"},
-                        "direction": {"type": "string", "enum": ["upstream", "downstream", "both"], "default": "both"},
-                        "min_confidence": {"type": "number", "default": 0.5},
-                        "max_depth": {"type": "integer", "default": 5},
-                    },
-                    "required": ["target"],
-                },
-            ),
-            types.Tool(
-                name="trace",
-                description="Trace full execution flow from an entry point through all call chains.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "entry_point": {"type": "string", "description": "Entry point name to trace"},
-                        "max_depth": {"type": "integer", "default": 20},
-                    },
-                    "required": ["entry_point"],
-                },
-            ),
-            types.Tool(
                 name="detect_changes",
                 description="Detect code changes and identify affected symbols, processes, and risk level.",
                 inputSchema={
@@ -524,11 +489,6 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
                         "scope": {"type": "string", "enum": ["all", "uncommitted"], "default": "all"},
                     },
                 },
-            ),
-            types.Tool(
-                name="cache_stats",
-                description="Return query cache statistics: hit rate, size, tracked files.",
-                inputSchema={"type": "object", "properties": {}},
             ),
         ]
 
@@ -942,11 +902,7 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         "god_nodes": _tool_god_nodes,
         "graph_stats": _tool_graph_stats,
         "shortest_path": _tool_shortest_path,
-        "context": _tool_context,
-        "impact": _tool_impact,
-        "trace": _tool_trace,
         "detect_changes": _tool_detect_changes,
-        "cache_stats": _tool_cache_stats,
     }
 
     @server.call_tool()

@@ -1176,12 +1176,14 @@ def main() -> None:
             sys.exit(1)
     elif cmd == "query":
         if len(sys.argv) < 3:
-            print("Usage: graphify query \"<question>\" [--dfs] [--budget N] [--graph path]", file=sys.stderr)
+            print("Usage: graphify query \"<question>\" [--dfs] [--risk|--trace] [--budget N] [--graph path]", file=sys.stderr)
             sys.exit(1)
         from graphify.serve import _score_nodes, _bfs, _dfs, _subgraph_to_text, _load_graph_file
         from graphify.security import sanitize_label
         question = sys.argv[2]
         use_dfs = "--dfs" in sys.argv
+        use_risk = "--risk" in sys.argv
+        use_trace = "--trace" in sys.argv
         budget = 2000
         graph_path = "graphify-out/graph.json"
         args = sys.argv[3:]
@@ -1211,6 +1213,7 @@ def main() -> None:
         except Exception as exc:
             print(f"error: could not load graph: {exc}", file=sys.stderr)
             sys.exit(1)
+        top_nid = None
         try:
             from graphify.search import build_orchestrator
             orch = build_orchestrator(G, use_embeddings=False)
@@ -1219,6 +1222,8 @@ def main() -> None:
             if not result_nodes:
                 print("No matching nodes found.")
                 sys.exit(0)
+            if result_nodes:
+                top_nid = result_nodes[0]
             nodes = set(result_nodes)
             edges: list[tuple] = []
             for nid in nodes:
@@ -1233,8 +1238,14 @@ def main() -> None:
                 print("No matching nodes found.")
                 sys.exit(0)
             start = [nid for _, nid in scored[:5]]
+            top_nid = start[0]
             nodes, edges = (_dfs if use_dfs else _bfs)(G, start, depth=2)
             print(_subgraph_to_text(G, nodes, edges, token_budget=budget))
+
+        if use_risk and top_nid:
+            _print_impact(G, top_nid, max_depth=5)
+        if use_trace and top_nid:
+            _print_trace(G, top_nid, max_depth=20)
     elif cmd == "save-result":
         # graphify save-result --question Q --answer A --type T [--nodes N1 N2 ...]
         import argparse as _ap
@@ -1285,6 +1296,10 @@ def main() -> None:
             sys.exit(0)
         hops = len(path_nodes) - 1
         segments = []
+        files_touched = set()
+        branch_points = 0
+        edge_confs = {"EXTRACTED": 0, "INFERRED": 0}
+        edge_rels = {}
         for i in range(len(path_nodes) - 1):
             u, v = path_nodes[i], path_nodes[i + 1]
             edata = G.edges[u, v]
@@ -1294,7 +1309,21 @@ def main() -> None:
             if i == 0:
                 segments.append(G.nodes[u].get("label", u))
             segments.append(f"--{rel}{conf_str}--> {G.nodes[v].get('label', v)}")
+            files_touched.add(G.nodes[v].get("source_file", ""))
+            if conf:
+                edge_confs[conf] = edge_confs.get(conf, 0) + 1
+            edge_rels[rel] = edge_rels.get(rel, 0) + 1
+            outgoing_calls = sum(1 for nb in G.neighbors(v)
+                               if (G.get_edge_data(v, nb) or {}).get("relation", "") in ("calls", "CALLS"))
+            if outgoing_calls > 1:
+                branch_points += 1
+
         print(f"Shortest path ({hops} hops):\n  " + " ".join(segments))
+        print(f"\n  {len(files_touched)} files  |  {branch_points} branch points  |  "
+              f"EXTRACTED: {edge_confs.get('EXTRACTED', 0)}  INFERRED: {edge_confs.get('INFERRED', 0)}")
+        if edge_rels:
+            rel_summary = "  ".join(f"{r}: {c}" for r, c in sorted(edge_rels.items()))
+            print(f"  {rel_summary}")
 
     elif cmd == "explain":
         if len(sys.argv) < 3:
@@ -1303,6 +1332,7 @@ def main() -> None:
         from graphify.serve import _find_node, _load_graph_file
         label = sys.argv[2]
         graph_path = "graphify-out/graph.json"
+        show_all = "--all" in sys.argv
         args = sys.argv[3:]
         for i, a in enumerate(args):
             if a == "--graph" and i + 1 < len(args):
@@ -1321,16 +1351,73 @@ def main() -> None:
         print(f"  Type:      {d.get('file_type', '')}")
         print(f"  Community: {d.get('community', '')}")
         print(f"  Degree:    {G.degree(nid)}")
-        neighbors = list(G.neighbors(nid))
-        if neighbors:
-            print(f"\nConnections ({len(neighbors)}):")
-            for nb in sorted(neighbors, key=lambda n: G.degree(n), reverse=True)[:20]:
-                edata = G.edges[nid, nb]
-                rel = edata.get("relation", "")
-                conf = edata.get("confidence", "")
-                print(f"  --> {G.nodes[nb].get('label', nb)} [{rel}] [{conf}]")
-            if len(neighbors) > 20:
-                print(f"  ... and {len(neighbors) - 20} more")
+
+        incoming_calls = []
+        outgoing_calls = []
+        imports_list = []
+        step_in_process = []
+        other = []
+
+        for nb in G.neighbors(nid):
+            edata = G.get_edge_data(nid, nb) or G.get_edge_data(nb, nid)
+            if not edata or not isinstance(edata, dict):
+                other.append((nb, "?", "?"))
+                continue
+            rel = edata.get("relation", "")
+            conf = edata.get("confidence", "")
+            nb_label = G.nodes[nb].get("label", nb)
+            nb_file = edata.get("source_file", "")
+            nb_loc = edata.get("source_location", "")
+            if rel in ("calls", "CALLS"):
+                if nid == edata.get("target", ""):
+                    incoming_calls.append((nb, nb_label, nb_file, nb_loc, conf))
+                else:
+                    outgoing_calls.append((nb, nb_label, conf))
+            elif rel in ("imports", "imports_from"):
+                imports_list.append((nb_label, rel))
+            elif rel == "step_in_process":
+                pn = edata.get("process_name", "")
+                si = edata.get("step_index", 0)
+                if pn:
+                    step_in_process.append((pn, si))
+            else:
+                other.append((nb, nb_label, rel, conf))
+
+        STEP = 15
+        if incoming_calls:
+            print(f"\n  Incoming calls ({len(incoming_calls)} callers →):")
+            for _, lbl, f, loc, conf in sorted(incoming_calls, key=lambda x: G.degree(x[0]), reverse=True)[:STEP]:
+                print(f"    ← {lbl} [{conf}] {f}:{loc}")
+            if len(incoming_calls) > STEP:
+                print(f"    ... and {len(incoming_calls) - STEP} more")
+
+        if outgoing_calls:
+            print(f"\n  Outgoing calls (→ {len(outgoing_calls)} callees):")
+            for _, lbl, conf in sorted(outgoing_calls, key=lambda x: G.degree(x[0]), reverse=True)[:STEP]:
+                print(f"    → {lbl} [{conf}]")
+            if len(outgoing_calls) > STEP:
+                print(f"    ... and {len(outgoing_calls) - STEP} more")
+
+        if imports_list:
+            print(f"\n  Imports ({len(imports_list)}):")
+            for lbl, rel in imports_list[:STEP]:
+                print(f"    {lbl} [{rel}]")
+            if len(imports_list) > STEP:
+                print(f"    ... and {len(imports_list) - STEP} more")
+
+        if step_in_process:
+            print(f"\n  Process membership ({len(step_in_process)}):")
+            for pn, si in step_in_process[:STEP]:
+                print(f"    {pn} (step {si})")
+            if len(step_in_process) > STEP:
+                print(f"    ... and {len(step_in_process) - STEP} more")
+
+        if other:
+            print(f"\n  Other connections ({len(other)}):")
+            for nb, lbl, rel, conf in sorted(other, key=lambda x: G.degree(x[0]), reverse=True)[:STEP]:
+                print(f"    {lbl} [{rel}] [{conf}]")
+            if len(other) > STEP:
+                print(f"    ... and {len(other) - STEP} more")
 
     elif cmd == "add":
         if len(sys.argv) < 3:
@@ -1656,6 +1743,100 @@ def main() -> None:
         print(f"error: unknown command '{cmd}'", file=sys.stderr)
         print("Run 'graphify --help' for usage.", file=sys.stderr)
         sys.exit(1)
+
+
+def _print_impact(G, nid, max_depth=5):
+    """Bake impact() into query --risk: blast radius on calls/depends_on edges."""
+    import networkx as _nx
+    label = G.nodes[nid].get("label", nid)
+    kind = G.nodes[nid].get("file_type", "code")
+    src_file = G.nodes[nid].get("source_file", "")
+
+    upstream = {}
+    downstream = {}
+    total_affected = 0
+    min_conf = 0.5
+
+    for direction, reverse in [("upstream", True), ("downstream", False)]:
+        visited = {nid}
+        frontier = {nid}
+        for d in range(1, max_depth + 1):
+            next_f = set()
+            level = []
+            for node in frontier:
+                for neighbor in G.neighbors(node):
+                    ed = G.get_edge_data(neighbor, node) if reverse else G.get_edge_data(node, neighbor)
+                    if not ed or not isinstance(ed, dict):
+                        continue
+                    rel = ed.get("relation", "")
+                    cs = ed.get("confidence_score", ed.get("weight", 0))
+                    if rel in ("calls", "CALLS", "depends_on") and cs >= min_conf:
+                        if neighbor not in visited:
+                            visited.add(neighbor)
+                            next_f.add(neighbor)
+                            nd = G.nodes[neighbor]
+                            level.append((nd.get("label", neighbor), ed.get("confidence", "")))
+            if level:
+                (upstream if direction == "upstream" else downstream)[d] = level
+            frontier = next_f
+        if direction == "upstream":
+            total_affected += len(visited) - 1
+
+    if total_affected > 50:
+        risk = "CRITICAL"
+    elif total_affected > 10:
+        risk = "HIGH"
+    elif total_affected > 5:
+        risk = "MEDIUM"
+    else:
+        risk = "LOW"
+
+    print(f"\n  ══ Impact: {label} ({kind})")
+    print(f"  Affected: {total_affected} nodes  |  Risk: {risk}  |  {src_file}")
+    if upstream:
+        print(f"  Upstream (depends on this):")
+        for depth, nodes in sorted(upstream.items())[:3]:
+            print(f"    L{depth}: {', '.join(lbl[:40] for lbl,_ in nodes[:5])}")
+    if downstream:
+        print(f"  Downstream (this depends on):")
+        for depth, nodes in sorted(downstream.items())[:3]:
+            print(f"    L{depth}: {', '.join(lbl[:40] for lbl,_ in nodes[:5])}")
+
+
+def _print_trace(G, nid, max_depth=20):
+    """Bake trace() into query --trace: process trace along calls edges."""
+    from graphify.processes import trace_process
+    from graphify.entry_points import EntryPoint
+
+    ndata = G.nodes[nid]
+    label = ndata.get("label", nid)
+    f = ndata.get("source_file", "")
+    sl = ndata.get("source_location", "0")
+    try:
+        line = int("".join(c for c in sl if c.isdigit()) or "0")
+    except ValueError:
+        line = 0
+
+    ep = EntryPoint(
+        name=label,
+        kind="EVENT",
+        file=f,
+        line=line,
+        language=ndata.get("language", ""),
+    )
+    proc = trace_process(ep, G, max_depth=max_depth)
+
+    print(f"\n  ══ Trace: {proc.name}")
+    print(f"  Entry:   {proc.entry_point.file}:{proc.entry_point.line}")
+    print(f"  Steps:   {proc.total_steps}  |  Depth: {proc.max_depth}  |  Complexity: {proc.cyclomatic_complexity}")
+    print(f"  External touches: {proc.external_touches}")
+    if proc.steps:
+        print(f"  Chain:")
+        for step in proc.steps[:15]:
+            caller_list = ", ".join(c[:30] for c in step.callers[:3])
+            print(f"    [{step.depth:>2}] {step.label[:50]}  {step.file}:{step.line}" + (f"  ← {caller_list}" if caller_list else ""))
+        if proc.total_steps > 15:
+            print(f"    ... (+{proc.total_steps - 15} more steps)")
 
 
 if __name__ == "__main__":

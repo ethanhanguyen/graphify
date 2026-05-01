@@ -27,7 +27,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import networkx as nx
 from networkx.readwrite import json_graph
 
-DEFAULT_GRAPH = VALIDATION_DIR / "out-speedai" / "graph.json"
+DEFAULT_GRAPH = VALIDATION_DIR / "out-current" / "graph.json"
 NUM_QUERIES = 10
 NUM_PATHS = 5
 NUM_EXPLAINS = 10
