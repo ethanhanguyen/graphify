@@ -168,3 +168,24 @@ def test_calls_deduplication():
     result = extract_python(FIXTURES / "sample_calls.py")
     call_pairs = [(e["source"], e["target"]) for e in result["edges"] if e["relation"] == "calls"]
     assert len(call_pairs) == len(set(call_pairs)), "Duplicate calls edges found"
+
+
+def test_extract_returns_per_file():
+    files = list(FIXTURES.glob("*.py"))
+    result = extract(files)
+    assert "per_file" in result
+    assert len(result["per_file"]) <= len(files)
+    for entry in result["per_file"]:
+        assert "nodes" in entry
+        assert "edges" in entry
+
+
+def test_extract_per_file_matches_input_count():
+    files = list(FIXTURES.glob("*.py"))
+    result = extract(files)
+    assert 0 < len(result["per_file"]) <= len(files)
+
+
+def test_extract_per_file_has_raw_calls():
+    result = extract_python(FIXTURES / "sample_calls.py")
+    assert "raw_calls" in result

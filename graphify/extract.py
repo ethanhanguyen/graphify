@@ -3483,6 +3483,7 @@ def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
     return {
         "nodes": all_nodes,
         "edges": all_edges,
+        "per_file": per_file,
         "input_tokens": 0,
         "output_tokens": 0,
     }

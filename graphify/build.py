@@ -241,6 +241,8 @@ def enrich_by_language(G: nx.Graph, files: list, extractions: list[dict]) -> nx.
         ".scala": "scala", ".php": "php", ".swift": "swift",
     }
 
+    _MAX_FILES_PER_LANG = 10000
+
     for f, ext in zip(files, extractions):
         p = Path(f) if isinstance(f, str) else f
         lang = language_map.get(p.suffix.lower(), "unknown")
@@ -250,6 +252,9 @@ def enrich_by_language(G: nx.Graph, files: list, extractions: list[dict]) -> nx.
     process_stats = {"traced": 0, "total_steps": 0, "clustered": 0}
 
     for lang, group in language_groups.items():
+        if lang == "unknown" or len(group) > _MAX_FILES_PER_LANG:
+            call_stats.setdefault("skipped", {})[lang] = len(group)
+            continue
         try:
             from graphify.call_dag import run_call_resolution
             g_files = [f for f, _ in group]
@@ -264,28 +269,29 @@ def enrich_by_language(G: nx.Graph, files: list, extractions: list[dict]) -> nx.
 
     G.graph["call_resolution_stats"] = call_stats
 
-    for lang, group in language_groups.items():
-        try:
-            from graphify.entry_points import detect_entry_points
-            from graphify.processes import trace_all_entry_points
-            g_extractions = [e for _, e in group]
-            entry_points = detect_entry_points(G, g_extractions, lang)
-            processes = trace_all_entry_points(entry_points, G)
-            process_stats["traced"] += len(processes)
-            process_stats["total_steps"] += sum(p.total_steps for p in processes)
+    try:
+        from graphify.entry_points import detect_entry_points, score_entry_points
+        from graphify.processes import trace_all_entry_points
+        _MAX_ENTRY_POINTS = 50
+        entry_points = detect_entry_points(G, extractions, "")
+        scored = score_entry_points(entry_points, G)
+        capped = scored[:_MAX_ENTRY_POINTS]
+        processes = trace_all_entry_points([ep for ep, _ in capped], G)
+        process_stats["traced"] = len(processes)
+        process_stats["total_steps"] = sum(p.total_steps for p in processes)
 
-            for proc in processes:
-                for i, step in enumerate(proc.steps):
-                    if i > 0:
-                        prev_id = proc.steps[i - 1].node_id
-                        G.add_edge(prev_id, step.node_id,
-                                   relation="step_in_process",
-                                   confidence="INFERRED",
-                                   confidence_score=0.8,
-                                   process_name=proc.name,
-                                   step_index=i)
-        except Exception:
-            pass
+        for proc in processes:
+            for i, step in enumerate(proc.steps):
+                if i > 0:
+                    prev_id = proc.steps[i - 1].node_id
+                    G.add_edge(prev_id, step.node_id,
+                               relation="step_in_process",
+                               confidence="INFERRED",
+                               confidence_score=0.8,
+                               process_name=proc.name,
+                               step_index=i)
+    except Exception:
+        pass
 
     G.graph["process_stats"] = process_stats
     return G

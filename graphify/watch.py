@@ -44,7 +44,7 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False) -> bool:
     try:
         from graphify.extract import extract
         from graphify.detect import detect
-        from graphify.build import build_from_json
+        from graphify.build import build_from_json, enrich_by_language
         from graphify.cluster import cluster, score_all
         from graphify.analyze import god_nodes, surprising_connections, suggest_questions
         from graphify.report import generate
@@ -74,6 +74,7 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False) -> bool:
                 result = {
                     "nodes": result["nodes"] + sem_nodes,
                     "edges": result["edges"] + sem_edges,
+                    "per_file": result.get("per_file", []),
                     "hyperedges": existing.get("hyperedges", []),
                     "input_tokens": 0,
                     "output_tokens": 0,
@@ -90,6 +91,15 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False) -> bool:
         }
 
         G = build_from_json(result)
+        G = enrich_by_language(G, code_files, result.get("per_file", []))
+        if G.graph.get("call_resolution_stats", {}).get("resolved", 0) > 0:
+            crs = G.graph["call_resolution_stats"]
+            resolved = crs.get("resolved", 0)
+            total = crs.get("total", 0)
+            print(f"[graphify watch] Call resolution: {resolved}/{total} resolved")
+        if G.graph.get("process_stats", {}).get("traced", 0) > 0:
+            ps = G.graph["process_stats"]
+            print(f"[graphify watch] Process tracing: {ps.get('traced', 0)} processes, {ps.get('total_steps', 0)} steps")
         communities = cluster(G)
         cohesion = score_all(G, communities)
         gods = god_nodes(G)

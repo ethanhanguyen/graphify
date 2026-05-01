@@ -903,6 +903,9 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         "graph_stats": _tool_graph_stats,
         "shortest_path": _tool_shortest_path,
         "detect_changes": _tool_detect_changes,
+        "context": _tool_context,
+        "impact": _tool_impact,
+        "trace": _tool_trace,
     }
 
     @server.call_tool()

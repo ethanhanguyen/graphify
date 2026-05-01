@@ -4,6 +4,21 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased — Fork Epoch 4: Performance & Correctness
 
+### PR 4.7 — Call DAG & Process Tracing Enrichment (Wire-Up)
+
+- `graphify/extract.py` — `extract()` now returns `per_file` key containing per-file extraction results, enabling downstream post-build enrichment
+- `graphify/build.py` — `enrich_by_language()` activated: runs 6-stage `CallResolutionDAG` + `detect_entry_points` + `trace_all_entry_points` post-build; adds `step_in_process` edges and INFERRED `calls` edges; caps: max 10K files per language, max 50 entry points for process tracing
+- `graphify/watch.py` — `_rebuild_code()` wires `enrich_by_language` after `build_from_json()`; preserves `per_file` through semantic graph merge
+- `graphify/call_dag.py` — `stage_resolve_target()`: global callee index replaces O(n^2) fallback scan with O(1) lookup; suffix/stem/namespace indexes passed to import resolution eliminating O(n) file scans
+- `graphify/imports.py` — `resolve_import()`, `resolve_all_imports()`: accept optional `suffix_index`, `stem_index`, `namespace_index` for O(1) path lookup; backward-compatible (indexes optional)
+- `graphify/serve.py` — Registered `context`, `impact`, `trace` MCP tools (previously dead code — defined but not in `_handlers`)
+- `tests/test_enrich.py` — 8 new tests for `enrich_by_language`: call resolution, skip logic, stats, step_in_process edges, edge limits
+- `tests/test_serve_handlers.py` — 16 new tests: context, impact, trace MCP tool handlers
+- `tests/test_imports.py` — +7 new tests for index-based fast paths
+- `tests/test_extract.py` — +3 new tests for `per_file` exposure
+
+**Impact:** graphify graph for self-repo grows from 255K → 429K edges (+68%); 212K cross-file calls resolved by DAG (89% rate); 50 processes traced with 11K steps; context/impact/trace MCP tools now functional with STEP_IN_PROCESS data
+
 ### PR 4.1 — Compact & Fast Serialization
 
 - `graphify/serve.py` — Unified `_load_graph_file()` shared across all CLI, serve, and build paths; optional `orjson` accelerator with stdlib fallback; `.json.gz` auto-detection

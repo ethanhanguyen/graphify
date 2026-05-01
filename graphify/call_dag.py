@@ -100,6 +100,17 @@ class CallResolutionDAG:
             all_files_map.setdefault(stem, []).append(str(f))
             all_files_map.setdefault(f.stem.lower(), []).append(str(f))
 
+        suffix_index: dict[str, list[str]] = {}
+        stem_index: dict[str, list[str]] = {}
+        namespace_index: dict[str, list[str]] = {}
+        for f in self.files:
+            fs = str(f)
+            suffix_index.setdefault(f"/{fs}", []).append(fs)
+            suffix_index.setdefault(f"/{f.name}", []).append(fs)
+            stem_index.setdefault(f.stem, []).append(fs)
+            f_norm = fs.replace("\\", "/")
+            namespace_index.setdefault(f_norm, []).append(fs)
+
         file_to_extraction = {str(f): r for f, r in zip(self.files, self.extractions)}
 
         import_map: dict[str, dict[str, str]] = {}
@@ -109,7 +120,8 @@ class CallResolutionDAG:
                 if e.get("relation") in ("imports", "imports_from")
             ]
             resolved = resolve_all_imports(
-                Path(file_path), imports, all_files_map, self.language
+                Path(file_path), imports, all_files_map, self.language,
+                suffix_index, stem_index, namespace_index,
             )
             import_map[file_path] = resolved
 
@@ -117,6 +129,7 @@ class CallResolutionDAG:
         self._scc_order = compute_scc_order(dep_graph)
 
         label_index: dict[str, dict[str, str]] = {}
+        global_callee_index: dict[str, str] = {}
         for result in self.extractions:
             for node in result.get("nodes", []):
                 file_key = node.get("source_file", "")
@@ -124,10 +137,11 @@ class CallResolutionDAG:
                 label = node.get("label", "").strip("()").lstrip(".").lower()
                 if label:
                     label_index[file_key][label] = node["id"]
+                    global_callee_index.setdefault(label, node["id"])
 
         for cs in self.call_sites:
             callee = cs.callee_name.lower()
-            resolved_nid = self._resolve_callee_nid(cs, callee, label_index, import_map)
+            resolved_nid = self._resolve_callee_nid(cs, callee, label_index, import_map, global_callee_index)
             if resolved_nid:
                 self.edges.append(CallEdge(
                     source=cs.caller_nid,
@@ -145,6 +159,7 @@ class CallResolutionDAG:
         callee: str,
         label_index: dict[str, dict[str, str]],
         import_map: dict[str, dict[str, str]],
+        global_callee_index: dict[str, str] | None = None,
     ) -> str | None:
         caller_file = cs.caller_file
 
@@ -180,6 +195,11 @@ class CallResolutionDAG:
                     import_base = import_name.rsplit(".", 1)[-1].lower() if "." in import_name else import_name.lower()
                     if callee == import_base:
                         continue
+
+        if global_callee_index:
+            nid = global_callee_index.get(callee)
+            if nid and nid != cs.caller_nid:
+                return nid
 
         for file_key, file_labels in label_index.items():
             if file_key == caller_file:

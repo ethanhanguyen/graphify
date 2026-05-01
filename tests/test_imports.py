@@ -321,3 +321,53 @@ def test_resolve_import_with_namespace_provider():
 def test_resolve_import_namespace_fallback_fails():
     result = resolve_import("total.ghost", _FROM_FILE, _ALL_FILES, "python")
     assert result is None
+
+
+# ===========================================================================
+# Index-based fast paths (suffix_index, stem_index, namespace_index)
+# ===========================================================================
+
+def test_resolve_wildcard_leaf_with_suffix_index():
+    suffix_index = {"/foo": ["src/foo.py"]}
+    result = _resolve_wildcard_leaf("foo", Path("main.py"), {}, suffix_index)
+    assert result == "src/foo.py"
+
+
+def test_resolve_wildcard_leaf_index_no_match():
+    result = _resolve_wildcard_leaf("bar", Path("main.py"), {}, {})
+    assert result is None
+
+
+def test_resolve_wildcard_transitive_with_stem_index():
+    stem_index = {"foo": ["lib/foo/__init__.py"]}
+    result = _resolve_wildcard_transitive("foo", Path("main.py"), {}, stem_index)
+    assert result == "lib/foo/__init__.py"
+
+
+def test_resolve_wildcard_transitive_index_no_match():
+    result = _resolve_wildcard_transitive("ghost", Path("main.py"), {}, {})
+    assert result is None
+
+
+def test_resolve_namespace_with_namespace_index():
+    namespace_index = {"lib/com/pkg/__init__.py": ["lib/com/pkg/__init__.py"]}
+    result = _resolve_namespace("com.pkg", Path("main.py"), {}, namespace_index)
+    assert result == "lib/com/pkg/__init__.py"
+
+
+def test_resolve_namespace_index_no_match():
+    result = _resolve_namespace("nothing", Path("main.py"), {}, {})
+    assert result is None
+
+
+def test_resolve_all_imports_with_indexes():
+    all_files = {"util": ["lib/util.py"]}
+    imports = [{"name": "util", "source_file": "src/main.py"}]
+    suffix_index = {"/util": ["lib/util.py"]}
+    stem_index = {"util": ["lib/util.py"]}
+    namespace_index = {"lib/util.py": ["lib/util.py"]}
+    result = resolve_all_imports(
+        Path("src/main.py"), imports, all_files, "python",
+        suffix_index, stem_index, namespace_index,
+    )
+    assert result == {"util": "lib/util.py"}
