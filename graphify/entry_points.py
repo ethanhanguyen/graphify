@@ -167,13 +167,108 @@ def register_detector(framework_name: str, detector: FrameworkEntryPointDetector
     _DETECTOR_REGISTRY[framework_name] = detector
 
 
+class GraphEntryPointDetector:
+    _ENTRY_LABELS = frozenset({"main", "run", "start", "index", "init", "bootstrap", "server", "app", "serve", "execute", "handle", "process", "entry", "launch", "setup"})
+    _HTTP_PATHS = frozenset({"route", "controller", "handler", "api", "endpoint", "middleware", "service"})
+    _TEST_PATTERNS = frozenset({"test_", "_test", "testspec"})
+
+    def detect(self, graph: nx.Graph) -> list[EntryPoint]:
+        results: list[EntryPoint] = []
+        for nid, ndata in graph.nodes(data=True):
+            label = ndata.get("label", "")
+            src_file = ndata.get("source_file", "")
+            node_type = ndata.get("node_type", "")
+            src_loc = ndata.get("source_location", "")
+            language = ndata.get("language", "")
+
+            line = 0
+            if src_loc:
+                m = re.search(r"(\d+)", str(src_loc))
+                if m:
+                    line = int(m.group(1))
+
+            label_lower = label.lower()
+
+            if self._is_entry_label(label_lower, node_type):
+                results.append(EntryPoint(
+                    name=label, kind="CLI", file=src_file, line=line,
+                    language=language, framework="",
+                ))
+
+            if self._is_http_path(src_file.lower(), node_type):
+                results.append(EntryPoint(
+                    name=label, kind="HTTP", file=src_file, line=line,
+                    language=language, framework="",
+                ))
+
+            if self._is_test_pattern(label_lower, node_type):
+                results.append(EntryPoint(
+                    name=label, kind="TEST", file=src_file, line=line,
+                    language=language, framework="",
+                ))
+
+        structure_eps = self._detect_structure_entry_points(graph)
+        results.extend(structure_eps)
+
+        return list({(ep.name, ep.file): ep for ep in results}.values())
+
+    def _is_entry_label(self, label_lower: str, node_type: str) -> bool:
+        if not node_type:
+            return "main" in label_lower or "server" in label_lower
+        return any(word in label_lower.split(".")[-1] for word in self._ENTRY_LABELS)
+
+    def _is_http_path(self, src_lower: str, node_type: str) -> bool:
+        if not node_type:
+            return False
+        return any(word in src_lower for word in self._HTTP_PATHS)
+
+    def _is_test_pattern(self, label_lower: str, node_type: str) -> bool:
+        if not node_type:
+            return False
+        return "test" in label_lower or label_lower.endswith("spec")
+
+    def _detect_structure_entry_points(self, graph: nx.Graph) -> list[EntryPoint]:
+        results: list[EntryPoint] = []
+        for nid in graph.nodes:
+            ndata = graph.nodes[nid]
+            if not ndata.get("source_file"):
+                continue
+            has_callers = False
+            has_callees = False
+            for nb in graph.neighbors(nid):
+                edata = graph.get_edge_data(nid, nb)
+                if edata and (edata.get("relation") in ("calls", "CALLS")):
+                    has_callees = True
+                edata = graph.get_edge_data(nb, nid)
+                if edata and (edata.get("relation") in ("calls", "CALLS")):
+                    has_callers = True
+            degree = graph.degree(nid)
+            if degree >= 3 and has_callees and not has_callers:
+                sl = ndata.get("source_location", "0")
+                line = 0
+                m = re.search(r"(\d+)", str(sl))
+                if m:
+                    line = int(m.group(1))
+                results.append(EntryPoint(
+                    name=ndata.get("label", nid),
+                    kind="CLI",
+                    file=ndata.get("source_file", ""),
+                    line=line,
+                    language=ndata.get("language", ""),
+                ))
+        return results
+
+
 def detect_entry_points(graph: nx.Graph, extractions: list, language: str = "") -> list[EntryPoint]:
     default = FrameworkEntryPointDetector()
     results: list[EntryPoint] = []
     results.extend(default.detect(graph, extractions))
     for fw, detector in _DETECTOR_REGISTRY.items():
         results.extend(detector.detect(graph, extractions))
-    return list({(ep.name, ep.file, ep.line): ep for ep in results}.values())
+    results = list({(ep.name, ep.file, ep.line): ep for ep in results}.values())
+    if not results:
+        results = GraphEntryPointDetector().detect(graph)
+    return results
 
 
 def score_entry_points(entry_points: list[EntryPoint], graph: nx.Graph) -> list[tuple[EntryPoint, float]]:

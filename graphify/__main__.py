@@ -1450,14 +1450,7 @@ def main() -> None:
         if subcmd == "list":
             try:
                 from graphify.entry_points import detect_entry_points, score_entry_points
-                extractions = []
-                ep = detect_entry_points(G, extractions, "python")
-                if not ep:
-                    ep = detect_entry_points(G, extractions, "typescript")
-                if not ep:
-                    ep = detect_entry_points(G, extractions, "go")
-                if not ep:
-                    ep = detect_entry_points(G, extractions, "java")
+                ep = detect_entry_points(G, [], "")
                 scored = score_entry_points(ep, G)
                 for ep_obj, score in scored[:20]:
                     print(f"  {ep_obj.kind:8s} {score:.2f}  {ep_obj.name}  ({ep_obj.file}:{ep_obj.line})")

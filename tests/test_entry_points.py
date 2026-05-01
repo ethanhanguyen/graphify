@@ -4,6 +4,7 @@ from graphify.entry_points import (
     EntryPoint,
     EntryPointDetector,
     FrameworkEntryPointDetector,
+    GraphEntryPointDetector,
     detect_entry_points,
     score_entry_points,
     register_detector,
@@ -248,3 +249,81 @@ def test_empty_extractions():
     G = nx.DiGraph()
     eps = detect_entry_points(G, [])
     assert eps == []
+
+
+class TestGraphEntryPointDetector:
+    def test_detects_main_function(self):
+        d = GraphEntryPointDetector()
+        G = nx.DiGraph()
+        G.add_node("n1", label="main", source_file="src/main.ts", source_location="L42",
+                    node_type="FUNCTION", language="typescript")
+        eps = d.detect(G)
+        assert len(eps) == 1
+        assert eps[0].name == "main"
+        assert eps[0].kind == "CLI"
+
+    def test_detects_run_function(self):
+        d = GraphEntryPointDetector()
+        G = nx.DiGraph()
+        G.add_node("n1", label="run_server", source_file="server.py", source_location="L10",
+                    node_type="FUNCTION", language="python")
+        eps = d.detect(G)
+        assert any("run" in ep.name for ep in eps)
+
+    def test_detects_http_route_handler(self):
+        d = GraphEntryPointDetector()
+        G = nx.DiGraph()
+        G.add_node("n1", label="getUser", source_file="src/controllers/user.ts", source_location="L20",
+                    node_type="FUNCTION", language="typescript")
+        eps = d.detect(G)
+        assert any(ep.kind == "HTTP" for ep in eps)
+
+    def test_detects_test_functions(self):
+        d = GraphEntryPointDetector()
+        G = nx.DiGraph()
+        G.add_node("n1", label="test_login", source_file="tests/login_test.py", source_location="L5",
+                    node_type="FUNCTION", language="python")
+        eps = d.detect(G)
+        assert any(ep.kind == "TEST" for ep in eps)
+
+    def test_detects_test_class(self):
+        d = GraphEntryPointDetector()
+        G = nx.DiGraph()
+        G.add_node("n1", label="LoginTest", source_file="tests/java/LoginTest.java", source_location="L10",
+                    node_type="CLASS", language="java")
+        eps = d.detect(G)
+        assert any(ep.kind == "TEST" for ep in eps)
+
+    def test_structure_based_entry_point(self):
+        d = GraphEntryPointDetector()
+        G = nx.DiGraph()
+        G.add_node("entry", label="orchestrator", source_file="src/main.py", source_location="L1",
+                    node_type="FUNCTION", language="python")
+        G.add_node("w1", label="worker1", source_file="src/workers.py", source_location="L5",
+                    node_type="FUNCTION", language="python")
+        G.add_node("w2", label="worker2", source_file="src/workers.py", source_location="L10",
+                    node_type="FUNCTION", language="python")
+        G.add_node("w3", label="worker3", source_file="src/workers.py", source_location="L15",
+                    node_type="FUNCTION", language="python")
+        G.add_edge("entry", "w1", relation="calls", confidence="EXTRACTED")
+        G.add_edge("entry", "w2", relation="calls", confidence="EXTRACTED")
+        G.add_edge("entry", "w3", relation="calls", confidence="EXTRACTED")
+        eps = d.detect(G)
+        assert any(ep.name == "orchestrator" for ep in eps)
+
+    def test_empty_graph_no_entry_points(self):
+        d = GraphEntryPointDetector()
+        G = nx.DiGraph()
+        eps = d.detect(G)
+        assert eps == []
+
+    def test_detect_entry_points_falls_back_to_graph(self):
+        from graphify.entry_points import _DETECTOR_REGISTRY
+        _DETECTOR_REGISTRY.clear()
+        G = nx.DiGraph()
+        G.add_node("n1", label="main", source_file="src/main.ts", source_location="L1",
+                    node_type="FUNCTION", language="typescript")
+        eps = detect_entry_points(G, [])
+        assert len(eps) >= 1
+        assert any(ep.name == "main" for ep in eps)
+
