@@ -1,5 +1,6 @@
 """Graph analysis: god nodes (most connected), surprising connections (cross-community), suggested questions."""
 from __future__ import annotations
+import time as _time
 import networkx as nx
 
 
@@ -360,29 +361,39 @@ def suggest_questions(
                 "why": f"Edge tagged AMBIGUOUS (relation: {relation}) - confidence is low.",
             })
 
-    # 2. Bridge nodes (high betweenness) → cross-cutting concern questions
+    # 2. Bridge nodes (cross-community connectors) → cross-cutting concern questions
     if G.number_of_edges() > 0:
-        k = min(100, G.number_of_nodes()) if G.number_of_nodes() > 1000 else None
-        betweenness = nx.betweenness_centrality(G, k=k, seed=42)
-        # Top bridge nodes that are NOT file-level hubs
+        # Count distinct neighbor communities per node — O(E) instead of O(E*k) betweenness
+        cross_community_count: dict[str, tuple[int, set[int]]] = {}
+        for nid in G.nodes:
+            if _is_file_node(G, nid) or _is_concept_node(G, nid):
+                continue
+            cid = node_community.get(nid)
+            if cid is None:
+                continue
+            neighbor_comms: set[int] = set()
+            for nb in G.neighbors(nid):
+                ncid = node_community.get(nb)
+                if ncid is not None and ncid != cid:
+                    neighbor_comms.add(ncid)
+            if neighbor_comms:
+                cross_community_count[nid] = (len(neighbor_comms), neighbor_comms)
+
         bridges = sorted(
-            [(n, s) for n, s in betweenness.items()
-             if not _is_file_node(G, n) and not _is_concept_node(G, n) and s > 0],
+            [(nid, count, comms) for nid, (count, comms) in cross_community_count.items()],
             key=lambda x: x[1],
             reverse=True,
         )[:3]
-        for node_id, score in bridges:
+        for node_id, count, neighbor_comms in bridges:
             label = G.nodes[node_id].get("label", node_id)
             cid = node_community.get(node_id)
             comm_label = community_labels.get(cid, f"Community {cid}") if cid is not None else "unknown"
-            neighbors = list(G.neighbors(node_id))
-            neighbor_comms = {node_community.get(n) for n in neighbors if node_community.get(n) != cid}
-            if neighbor_comms:
-                other_labels = [community_labels.get(c, f"Community {c}") for c in neighbor_comms]
+            other_labels = [community_labels.get(c, f"Community {c}") for c in neighbor_comms]
+            if other_labels:
                 questions.append({
                     "type": "bridge_node",
                     "question": f"Why does `{label}` connect `{comm_label}` to {', '.join(f'`{l}`' for l in other_labels)}?",
-                    "why": f"High betweenness centrality ({score:.3f}) - this node is a cross-community bridge.",
+                    "why": f"Connects {count} different communities — this node is a cross-community bridge.",
                 })
 
     # 3. God nodes with many INFERRED edges → verification questions
@@ -431,6 +442,7 @@ def suggest_questions(
 
     # 5. Low-cohesion communities → structural questions
     from .cluster import cohesion_score
+    t_coh = _time.time()
     for cid, nodes in communities.items():
         score = cohesion_score(G, nodes)
         if score < 0.15 and len(nodes) >= 5:
@@ -440,6 +452,8 @@ def suggest_questions(
                 "question": f"Should `{label}` be split into smaller, more focused modules?",
                 "why": f"Cohesion score {score} - nodes in this community are weakly interconnected.",
             })
+    if _time.time() - t_coh > 0.5:
+        print(f"[graphify timing]       cohesion_loop ({len(communities)} communities): {_time.time() - t_coh:.1f}s")
 
     if not questions:
         return [{

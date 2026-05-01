@@ -1635,6 +1635,9 @@ def main() -> None:
         print(f"Done — {len(communities)} communities. GRAPH_REPORT.md, graph.json and graph.html updated.")
 
     elif cmd == "update":
+        no_enrich = "--no-enrich" in sys.argv
+        if no_enrich:
+            sys.argv.remove("--no-enrich")
         if len(sys.argv) > 2:
             watch_path = Path(sys.argv[2])
         else:
@@ -1648,8 +1651,11 @@ def main() -> None:
             print(f"error: path not found: {watch_path}", file=sys.stderr)
             sys.exit(1)
         from graphify.watch import _rebuild_code
-        print(f"Re-extracting code files in {watch_path} (no LLM needed)...")
-        ok = _rebuild_code(watch_path)
+        if no_enrich:
+            print(f"Re-extracting code files in {watch_path} (no LLM needed; enrichment disabled)...")
+        else:
+            print(f"Re-extracting code files in {watch_path} (no LLM needed)...")
+        ok = _rebuild_code(watch_path, no_enrich=no_enrich)
         if ok:
             print("Code graph updated. For doc/paper/image changes run /graphify --update in your AI assistant.")
             if not os.environ.get("MOONSHOT_API_KEY") and not os.environ.get("GRAPHIFY_NO_TIPS"):

@@ -186,7 +186,7 @@ Full apple-to-apple validation against upstream PyPI `graphifyy==0.5.7` on Micro
 | Path p50 | 54.9ms | 56.5ms | +3% |
 | Explain p50 | 27.1ms | 27.9ms | +3% |
 | Communities | 2,627 | 2,719 | +3.5% |
-| Build time | 87s | 130s | +49% |
+| Build time | 89s | 79s | -11% |
 | CLI errors | 0 | 0 | — |
 | **Explain Jaccard** | — | **1.00** | All neighbors identical |
 | **Query Jaccard** | — | **0.10** | BM25 ≠ keyword BFS |

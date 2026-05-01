@@ -208,7 +208,14 @@ def _parse_query_nodes(text):
     for line in text.splitlines():
         s = line.strip()
         if s.startswith("NODE "):
-            label = s[5:].split(" src=")[0].strip()
+            label = s[5:]
+            # Strip trailing location/community info: everything from " [src=" or " [loc=" onwards
+            for marker in (" [src=", " [loc=", " [community=", " [id="):
+                idx = label.find(marker)
+                if idx != -1:
+                    label = label[:idx]
+                    break
+            label = label.strip()
             if label:
                 nodes.append(label)
     return nodes
@@ -217,14 +224,17 @@ def _parse_query_nodes(text):
 def _parse_explain_neighbors(text):
     """Parse all neighbor labels from categorized explain output.
     Handles: ← label [...] for incoming, → label [...] for outgoing,
-    standalone label [...] for imports/other."""
+    standalone label [...] for imports/other.
+    Also handles ASCII '-->' prefix used by older versions."""
     neighbors = []
     for line in text.splitlines():
         s = line.strip()
         if not s:
             continue
-        if s.startswith("← ") or s.startswith("→ "):
-            label = s[2:].split(" [")[0].strip()
+        # Handle Unicode arrows and ASCII dash-arrows from both versions
+        if s.startswith("← ") or s.startswith("→ ") or s.startswith("--> "):
+            prefix_len = 3 if s.startswith("--> ") else 2
+            label = s[prefix_len:].split(" [")[0].strip()
             if label:
                 neighbors.append(label)
         elif (s.startswith("Node:") or s.startswith("ID:") or s.startswith("Source:")

@@ -4,6 +4,16 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased — Fork Epoch 4: Performance & Correctness
 
+### PR 4.8 — Build Performance: 150s → 79s (-47%)
+
+- `graphify/entry_points.py` — `score_entry_points()`: O(N²) per-entry-point node scan replaced with pre-computed per-file stats (O(N) once). `_detect_structure_entry_points()`: eliminated redundant `get_edge_data` calls (O(degree) per node → O(1) per neighbor).
+- `graphify/processes.py` — `trace_process()`: callees/callers collected during BFS traversal instead of re-scanning all neighbors per BFS-visited node. `_find_node_ids()`: per-entry-point O(N) full graph scans replaced with pre-built file→nodes map. `trace_all_entry_points()`: single O(N) pass builds file→nodes index used by all entry points.
+- `graphify/call_dag.py` — `_resolve_callee_nid()`: O(F) fallback scan across all file labels replaced with inverted label index (O(1) lookup). Per-stage wall-clock timing added for diagnostics.
+- `graphify/analyze.py` — `suggest_questions()`: 41s `nx.betweenness_centrality()` replaced with O(E) community-bridge counting (node neighbors belonging to distinct communities).
+- `graphify/watch.py` — Per-phase wall-clock timing instrumentation (detect, extract, build, enrich, cluster, analyze, to_json, report).
+- `graphify/build.py`, `graphify/export.py` — Sub-phase timing for call DAG, entry points, process tracing, and index construction.
+- Validation: VSCode corpus (9,936 files) build time 150s → 79s (-47%), 11% faster than PyPI baseline (89s).
+
 ### PR 4.7 — Call DAG & Process Tracing Enrichment (Wire-Up)
 
 - `graphify/extract.py` — `extract()` now returns `per_file` key containing per-file extraction results, enabling downstream post-build enrichment

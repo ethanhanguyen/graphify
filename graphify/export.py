@@ -4,6 +4,7 @@ import html as _html
 import json
 import math
 import re
+import time as _time
 from collections import Counter
 from pathlib import Path
 import networkx as nx
@@ -334,9 +335,11 @@ def to_json(G: nx.Graph, communities: dict[int, list[str]], output_path: str, *,
     G.graph.pop("index", None)
     with open(output_path, "w", encoding="utf-8") as f:  # nosec
         json.dump(data, f, separators=(",", ":"))
+    t_idx = _time.time()
     from graphify.index import build_indexes, save_indexes
     build_indexes(G)
     save_indexes(G, output_path)
+    print(f"[graphify timing]   build_indexes: {_time.time() - t_idx:.1f}s")
     return True
 
 

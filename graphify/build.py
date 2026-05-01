@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import time as _time
 from pathlib import Path
 import networkx as nx
 from .validate import validate_extraction
@@ -256,10 +257,14 @@ def enrich_by_language(G: nx.Graph, files: list, extractions: list[dict]) -> nx.
             call_stats.setdefault("skipped", {})[lang] = len(group)
             continue
         try:
+            t_lang = _time.time()
             from graphify.call_dag import run_call_resolution
             g_files = [f for f, _ in group]
             g_extractions = [e for _, e in group]
             call_edges, cstats = run_call_resolution(g_files, g_extractions, lang)
+            elapsed = _time.time() - t_lang
+            if elapsed > 1.0:
+                print(f"[graphify timing]   call_dag({lang}, {len(group)} files): {elapsed:.1f}s (resolved={cstats.get('resolve_target', 0)}/{cstats.get('extract', 0)})")
             for edge in call_edges:
                 G.add_edge(edge["source"], edge["target"], **{k: v for k, v in edge.items() if k not in ("source", "target")})
             call_stats["resolved"] += cstats.get("resolve_target", 0)
@@ -272,13 +277,17 @@ def enrich_by_language(G: nx.Graph, files: list, extractions: list[dict]) -> nx.
     try:
         from graphify.entry_points import detect_entry_points, score_entry_points
         from graphify.processes import trace_all_entry_points
+        t_eps = _time.time()
         _MAX_ENTRY_POINTS = 50
         entry_points = detect_entry_points(G, extractions, "")
         scored = score_entry_points(entry_points, G)
         capped = scored[:_MAX_ENTRY_POINTS]
+        print(f"[graphify timing]   entry_points (detect+score): {_time.time() - t_eps:.1f}s ({len(scored)} candidates)")
+        t_proc = _time.time()
         processes = trace_all_entry_points([ep for ep, _ in capped], G)
         process_stats["traced"] = len(processes)
         process_stats["total_steps"] = sum(p.total_steps for p in processes)
+        print(f"[graphify timing]   process_tracing: {_time.time() - t_proc:.1f}s ({len(processes)} processes, {process_stats['total_steps']} steps)")
 
         for proc in processes:
             for i, step in enumerate(proc.steps):

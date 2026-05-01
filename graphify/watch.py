@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 
+import time as _time
 from graphify.detect import CODE_EXTENSIONS, DOC_EXTENSIONS, PAPER_EXTENSIONS, IMAGE_EXTENSIONS
 
 _WATCHED_EXTENSIONS = CODE_EXTENSIONS | DOC_EXTENSIONS | PAPER_EXTENSIONS | IMAGE_EXTENSIONS
@@ -33,7 +34,7 @@ def _relativize_source_files(payload: dict, root: Path) -> None:
                 continue
 
 
-def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False) -> bool:
+def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False, no_enrich: bool = False) -> bool:
     """Re-run AST extraction + build + cluster + report for code files. No LLM needed.
 
     Returns True on success, False on error.
@@ -50,14 +51,18 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False) -> bool:
         from graphify.report import generate
         from graphify.export import to_json, to_html
 
+        t0 = _time.time()
         detected = detect(watch_path, follow_symlinks=follow_symlinks)
         code_files = [Path(f) for f in detected['files']['code']]
+        print(f"[graphify timing] detect: {_time.time() - t0:.1f}s")
 
         if not code_files:
             print("[graphify watch] No code files found - nothing to rebuild.")
             return False
 
+        t0 = _time.time()
         result = extract(code_files, cache_root=watch_root)
+        print(f"[graphify timing] extract: {_time.time() - t0:.1f}s")
 
         # Preserve semantic nodes/edges from a previous full run.
         # AST-only rebuild replaces code nodes; doc/paper/image nodes are kept.
@@ -90,8 +95,13 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False) -> bool:
             "total_words": detected.get("total_words", 0),
         }
 
+        t0 = _time.time()
         G = build_from_json(result)
-        G = enrich_by_language(G, code_files, result.get("per_file", []))
+        print(f"[graphify timing] build_from_json: {_time.time() - t0:.1f}s (nodes={G.number_of_nodes()}, edges={G.number_of_edges()})")
+        t0 = _time.time()
+        if not no_enrich:
+            G = enrich_by_language(G, code_files, result.get("per_file", []))
+        print(f"[graphify timing] enrich_by_language: {_time.time() - t0:.1f}s")
         if G.graph.get("call_resolution_stats", {}).get("resolved", 0) > 0:
             crs = G.graph["call_resolution_stats"]
             resolved = crs.get("resolved", 0)
@@ -100,26 +110,39 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False) -> bool:
         if G.graph.get("process_stats", {}).get("traced", 0) > 0:
             ps = G.graph["process_stats"]
             print(f"[graphify watch] Process tracing: {ps.get('traced', 0)} processes, {ps.get('total_steps', 0)} steps")
+        t0 = _time.time()
         communities = cluster(G)
         cohesion = score_all(G, communities)
+        print(f"[graphify timing] cluster+score: {_time.time() - t0:.1f}s")
+        t0 = _time.time()
         gods = god_nodes(G)
+        print(f"[graphify timing]   god_nodes: {_time.time() - t0:.1f}s")
+        t0 = _time.time()
         surprises = surprising_connections(G, communities)
+        print(f"[graphify timing]   surprising_connections: {_time.time() - t0:.1f}s")
         labels = {cid: "Community " + str(cid) for cid in communities}
+        t0 = _time.time()
         questions = suggest_questions(G, communities, labels)
+        print(f"[graphify timing]   suggest_questions: {_time.time() - t0:.1f}s")
 
         out.mkdir(exist_ok=True)
         (out / ".graphify_root").write_text(str(watch_root), encoding="utf-8")
 
+        t0 = _time.time()
         json_written = to_json(G, communities, str(out / "graph.json"))
+        print(f"[graphify timing] to_json: {_time.time() - t0:.1f}s")
         if not json_written:
             return False
 
+        t0 = _time.time()
         report = generate(G, communities, cohesion, labels, gods, surprises, detection,
                           {"input": 0, "output": 0}, report_root, suggested_questions=questions)
         (out / "GRAPH_REPORT.md").write_text(report, encoding="utf-8")
+        print(f"[graphify timing] report: {_time.time() - t0:.1f}s")
 
         # to_html raises ValueError for graphs > MAX_NODES_FOR_VIZ (5000).
         # Wrap so core outputs (graph.json + GRAPH_REPORT.md) always land.
+        t0 = _time.time()
         html_written = False
         try:
             to_html(G, communities, str(out / "graph.html"), community_labels=labels or None)
@@ -129,6 +152,8 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False) -> bool:
             stale = out / "graph.html"
             if stale.exists():
                 stale.unlink()
+        if html_written:
+            print(f"[graphify timing] to_html: {_time.time() - t0:.1f}s")
 
         # clear stale needs_update flag if present
         flag = out / "needs_update"

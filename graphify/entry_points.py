@@ -237,11 +237,11 @@ class GraphEntryPointDetector:
             has_callees = False
             for nb in graph.neighbors(nid):
                 edata = graph.get_edge_data(nid, nb)
-                if edata and (edata.get("relation") in ("calls", "CALLS")):
-                    has_callees = True
-                edata = graph.get_edge_data(nb, nid)
-                if edata and (edata.get("relation") in ("calls", "CALLS")):
-                    has_callers = True
+                if edata and edata.get("relation") in ("calls", "CALLS"):
+                    if edata.get("_src") == nid:
+                        has_callees = True
+                    else:
+                        has_callers = True
             degree = graph.degree(nid)
             if degree >= 3 and has_callees and not has_callers:
                 sl = ndata.get("source_location", "0")
@@ -272,18 +272,22 @@ def detect_entry_points(graph: nx.Graph, extractions: list, language: str = "") 
 
 
 def score_entry_points(entry_points: list[EntryPoint], graph: nx.Graph) -> list[tuple[EntryPoint, float]]:
+    file_stats: dict[str, tuple[int, int, str]] = {}
+    for nid, ndata in graph.nodes(data=True):
+        nfile = ndata.get("source_file", "")
+        if not nfile:
+            continue
+        count, bonus, _ = file_stats.get(nfile, (0, 0, ""))
+        count += 1
+        nlabel = ndata.get("label", "").lower()
+        if "main" in nlabel or "handler" in nlabel:
+            bonus += 1
+        file_stats[nfile] = (count, bonus, nid)
+
     scored: list[tuple[EntryPoint, float]] = []
     for ep in entry_points:
-        score = 0.0
-        for nid in graph.nodes:
-            ndata = graph.nodes[nid]
-            nfile = ndata.get("source_file", "")
-            nlabel = ndata.get("label", "")
-            if nfile == ep.file:
-                score += 1.0
-                if "main" in nlabel.lower() or "handler" in nlabel.lower():
-                    score += 1.0
-        node_id = _resolve_node_id(graph, ep)
+        count, bonus, node_id = file_stats.get(ep.file, (0, 0, None))
+        score = float(count) + float(bonus)
         if node_id:
             degree = graph.degree(node_id) if node_id in graph else 0
             score += degree * 0.5
@@ -295,15 +299,5 @@ def score_entry_points(entry_points: list[EntryPoint], graph: nx.Graph) -> list[
         scored = [(ep, s / max_score) for ep, s in scored]
     return sorted(scored, key=lambda x: x[1], reverse=True)
 
-
 def _resolve_node_id(graph: nx.Graph, ep: EntryPoint) -> str | None:
-    for nid, ndata in graph.nodes(data=True):
-        nfile = ndata.get("source_file", "")
-        nlabel = ndata.get("label", "")
-        if nfile == ep.file and ep.name.lower() in nlabel.lower():
-            return nid
-    for nid, ndata in graph.nodes(data=True):
-        nfile = ndata.get("source_file", "")
-        if nfile == ep.file:
-            return nid
     return None

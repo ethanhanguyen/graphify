@@ -27,7 +27,7 @@ fail()   { printf "  ${RED}FAIL: %s${NC}\n" "$1" >&2; exit 1; }
 warn()   { printf "  ${YELLOW}WARNING: %s${NC}\n" "$1"; }
 
 # ── Parse args ────────────────────────────────────────────────────
-SKIP_SETUP=0; SKIP_BUILD=0; SKIP_QUERIES=0; CLEAN=0
+SKIP_SETUP=0; SKIP_BUILD=0; SKIP_QUERIES=0; CLEAN=0; NO_ENRICH=0
 CORPUS_ARG=""; TAG_ARG=""; COMPARE_AGAINST=""
 
 while [[ $# -gt 0 ]]; do
@@ -39,6 +39,7 @@ while [[ $# -gt 0 ]]; do
         --skip-queries) SKIP_QUERIES=1; shift ;;
         --tag)      TAG_ARG="$2"; shift 2 ;;
         --compare-against) COMPARE_AGAINST="$2"; shift 2 ;;
+        --no-enrich) NO_ENRICH=1; shift ;;
         -h|--help)
             cat <<'HELP'
 Usage: ./run.sh [options]
@@ -106,11 +107,12 @@ move_graphify_out() {
 
 run_build() {
     local label="$1" venv="$2" outdir="$3"
+    local extra_args=("${@:4}")
     printf "  Building %s graph...\n" "$label"
     local log="$outdir/build.log"
     local start
     start=$(date +%s)
-    if ! "$venv/bin/graphify" update "$CORPUS_DIR" > "$log" 2>&1; then
+    if ! "$venv/bin/graphify" update "$CORPUS_DIR" "${extra_args[@]:-}" > "$log" 2>&1; then
         printf "    ${RED}%s build FAILED${NC}\n" "$label"
         cat "$log"
         return 1
@@ -233,7 +235,11 @@ if [ $SKIP_BUILD -eq 0 ]; then
     ok
 
     rm -rf "$CORPUS_DIR/graphify-out"
-    run_build "current" "$VENV_C" "$OUT_C" || fail "Current build failed"
+    if [ $NO_ENRICH -eq 1 ]; then
+        run_build "current (no enrich)" "$VENV_C" "$OUT_C" "--no-enrich" || fail "Current build failed"
+    else
+        run_build "current" "$VENV_C" "$OUT_C" || fail "Current build failed"
+    fi
     ok
 
     [ -f "$OUT_B/graph.json" ] && [ -f "$OUT_C/graph.json" ] || \

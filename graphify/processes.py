@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -34,8 +35,9 @@ class Process:
     external_touches: int = 0
 
 
-def trace_process(entry_point: EntryPoint, graph: nx.Graph, max_depth: int = 20, max_nodes: int = 1000) -> Process:
-    start_ids = _find_node_ids(graph, entry_point)
+def trace_process(entry_point: EntryPoint, graph: nx.Graph, max_depth: int = 20,
+                  max_nodes: int = 1000, file_to_nodes: dict[str, list[tuple[str, str]]] | None = None) -> Process:
+    start_ids = _find_node_ids(graph, entry_point, file_to_nodes)
     if not start_ids:
         return Process(
             name=entry_point.name,
@@ -44,12 +46,13 @@ def trace_process(entry_point: EntryPoint, graph: nx.Graph, max_depth: int = 20,
             framework=entry_point.framework,
         )
 
-    start_id = start_ids[0]
-
     visited: dict[str, int] = {}
     parent: dict[str, str] = {}
     order: list[str] = []
     queue: deque[tuple[str, int]] = deque()
+    # Collect callees/callers during BFS to avoid re-scanning neighbors later
+    node_callees: dict[str, list[str]] = {}
+    node_callers: dict[str, list[str]] = {}
 
     for sid in start_ids:
         queue.append((sid, 0))
@@ -73,6 +76,11 @@ def trace_process(entry_point: EntryPoint, graph: nx.Graph, max_depth: int = 20,
             if relation not in ("calls", "CALLS"):
                 continue
 
+            # Track callee (node_id -> neighbor direction)
+            node_callees.setdefault(node_id, []).append(neighbor)
+            # Track caller (neighbor -> node_id direction, since edge is undirected)
+            node_callers.setdefault(neighbor, []).append(node_id)
+
             if neighbor not in visited:
                 visited[neighbor] = depth + 1
                 parent[neighbor] = node_id
@@ -86,19 +94,14 @@ def trace_process(entry_point: EntryPoint, graph: nx.Graph, max_depth: int = 20,
         src_loc_str = ndata.get("source_location", "0")
         line = 0
         try:
-            import re
             m = re.search(r"(\d+)", str(src_loc_str))
             if m:
                 line = int(m.group(1))
         except (ValueError, TypeError):
             pass
 
-        callees = [nb for nb in graph.neighbors(nid)
-                   if graph.get_edge_data(nid, nb) and
-                   (graph.get_edge_data(nid, nb) or {}).get("relation", "") in ("calls", "CALLS")]
-        callers = [nb for nb in graph.neighbors(nid)
-                   if graph.get_edge_data(nb, nid) and
-                   (graph.get_edge_data(nb, nid) or {}).get("relation", "") in ("calls", "CALLS")]
+        callees = node_callees.get(nid, [])
+        callers = node_callers.get(nid, [])
 
         steps.append(ProcessStep(
             node_id=nid,
@@ -133,9 +136,16 @@ def trace_process(entry_point: EntryPoint, graph: nx.Graph, max_depth: int = 20,
 
 
 def trace_all_entry_points(entry_points: list[EntryPoint], graph: nx.Graph) -> list[Process]:
+    # Pre-build file->nodes map once instead of O(N) scan per entry point
+    file_to_nodes: dict[str, list[tuple[str, str]]] = {}
+    for nid, ndata in graph.nodes(data=True):
+        nfile = ndata.get("source_file", "")
+        if nfile:
+            file_to_nodes.setdefault(nfile, []).append((nid, ndata.get("label", "")))
+
     processes: list[Process] = []
     for ep in entry_points:
-        p = trace_process(ep, graph)
+        p = trace_process(ep, graph, file_to_nodes=file_to_nodes)
         if p.total_steps > 0:
             processes.append(p)
     return sorted(processes, key=lambda p: p.total_steps, reverse=True)
@@ -205,7 +215,15 @@ def trace_changed_nodes(graph: nx.Graph, changed_files: list[str]) -> list[Proce
     return sorted(processes, key=lambda p: p.total_steps, reverse=True)
 
 
-def _find_node_ids(graph: nx.Graph, ep: EntryPoint) -> list[str]:
+def _find_node_ids(graph: nx.Graph, ep: EntryPoint,
+                   file_to_nodes: dict[str, list[tuple[str, str]]] | None = None) -> list[str]:
+    if file_to_nodes:
+        entries = file_to_nodes.get(ep.file, [])
+        ids = [nid for nid, label in entries if ep.name.lower() in label.lower()]
+        if not ids:
+            ids = [nid for nid, _ in entries]
+        return ids
+    # Fallback for callers that don't pass file_to_nodes
     ids: list[str] = []
     for nid, ndata in graph.nodes(data=True):
         nfile = ndata.get("source_file", "")

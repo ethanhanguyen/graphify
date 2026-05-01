@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time as _time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List
@@ -130,6 +131,8 @@ class CallResolutionDAG:
 
         label_index: dict[str, dict[str, str]] = {}
         global_callee_index: dict[str, str] = {}
+        # Inverted index: label -> [(file_key, nid)] for O(1) fallback lookup
+        inverted_label_index: dict[str, list[tuple[str, str]]] = {}
         for result in self.extractions:
             for node in result.get("nodes", []):
                 file_key = node.get("source_file", "")
@@ -138,10 +141,11 @@ class CallResolutionDAG:
                 if label:
                     label_index[file_key][label] = node["id"]
                     global_callee_index.setdefault(label, node["id"])
+                    inverted_label_index.setdefault(label, []).append((file_key, node["id"]))
 
         for cs in self.call_sites:
             callee = cs.callee_name.lower()
-            resolved_nid = self._resolve_callee_nid(cs, callee, label_index, import_map, global_callee_index)
+            resolved_nid = self._resolve_callee_nid(cs, callee, label_index, import_map, global_callee_index, inverted_label_index)
             if resolved_nid:
                 self.edges.append(CallEdge(
                     source=cs.caller_nid,
@@ -160,6 +164,7 @@ class CallResolutionDAG:
         label_index: dict[str, dict[str, str]],
         import_map: dict[str, dict[str, str]],
         global_callee_index: dict[str, str] | None = None,
+        inverted_label_index: dict[str, list[tuple[str, str]]] | None = None,
     ) -> str | None:
         caller_file = cs.caller_file
 
@@ -201,11 +206,11 @@ class CallResolutionDAG:
             if nid and nid != cs.caller_nid:
                 return nid
 
-        for file_key, file_labels in label_index.items():
-            if file_key == caller_file:
-                continue
-            if callee in file_labels:
-                return file_labels[callee]
+        if inverted_label_index:
+            entries = inverted_label_index.get(callee, [])
+            for file_key, nid in entries:
+                if file_key != caller_file and nid != cs.caller_nid:
+                    return nid
 
         return None
 
@@ -231,13 +236,25 @@ class CallResolutionDAG:
         return edge_dicts
 
     def run(self) -> tuple[list[dict], dict]:
+        t0 = _time.time()
         self.stage_extract()
+        t0 = self._log_phase("call_dag.extract", t0)
         self.stage_classify()
+        t0 = self._log_phase("call_dag.classify", t0)
         self.stage_infer_receiver()
+        t0 = self._log_phase("call_dag.infer_receiver", t0)
         self.stage_select_dispatch()
+        t0 = self._log_phase("call_dag.select_dispatch", t0)
         self.stage_resolve_target()
+        self._log_phase("call_dag.resolve_target", t0)
         edges = self.stage_emit_edge()
         return edges, self.stats
+
+    def _log_phase(self, name: str, t0: float) -> float:
+        elapsed = _time.time() - t0
+        if elapsed > 0.5:
+            print(f"[graphify timing]     {name}: {elapsed:.1f}s")
+        return _time.time()
 
 
 def run_call_resolution(
