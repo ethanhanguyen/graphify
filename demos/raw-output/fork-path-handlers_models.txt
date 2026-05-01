@@ -1,0 +1,5 @@
+Shortest path (4 hops):
+  handlers.py --contains [EXTRACTED]--> get_user() --calls [INFERRED]--> .to_dict() --method [EXTRACTED]--> User --contains [EXTRACTED]--> models.py
+
+  2 files  |  2 branch points  |  EXTRACTED: 3  INFERRED: 1
+  calls: 1  contains: 2  method: 1

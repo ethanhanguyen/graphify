@@ -1,0 +1,2 @@
+error: unknown command 'processes'
+Run 'graphify --help' for usage.

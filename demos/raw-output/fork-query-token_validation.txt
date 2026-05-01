@@ -1,0 +1,3 @@
+NODE validate_token() [src=auth.py loc=L17 community=2]
+NODE create_token() [src=auth.py loc=L30 community=2]
+NODE _extract_token() [src=server.py loc=L51 community=3]

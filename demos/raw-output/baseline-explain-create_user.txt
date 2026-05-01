@@ -1,0 +1,13 @@
+Node: create_user()
+  ID:        toy_service_handlers_create_user
+  Source:    handlers.py L18
+  Type:      code
+  Community: 0
+  Degree:    5
+
+Connections (5):
+  --> create_token() [calls] [INFERRED]
+  --> handlers.py [contains] [EXTRACTED]
+  --> hash_password() [calls] [INFERRED]
+  --> register() [calls] [INFERRED]
+  --> _insert_user() [calls] [EXTRACTED]

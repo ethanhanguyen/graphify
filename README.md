@@ -138,6 +138,40 @@ Compact serialization, ranked node lookup, and unified 3-primitive CLI.
 | **Index persistence** | `index.py` — CompositeIndex serialized to `<graph>.index.json`. Popped from `G.graph` before JSON serialize to avoid TypeError. Auto-loaded on graph load. |
 | **Test coverage** | 1019 tests pass (was 917 upstream). Key modules at 96-100% coverage. 24 index round-trip tests, 21 code_emitter tests, 23 serialization tests, 8 graph-based entry_point tests. |
 
+## Before/After Demo (toy-service)
+
+A 5-file Python FastAPI microservice at `demos/toy-service/`. Build it with
+both upstream and fork to see the enrichment delta in action.
+
+Full walkthrough at [demos/GRAPHIFY_FEATURES.md](demos/GRAPHIFY_FEATURES.md).
+
+### explain "get_user()" — cross-file calls
+
+| | Upstream (graphifyy) | Fork (this repo) |
+|---|---|---|
+| Output | Flat "Connections" list, 3 edges | Categorized calls, **5 edges** |
+| Cross-file calls | None resolved | `.find_by_id()` → models.py, `.to_dict()` → models.py |
+| Call direction | Not shown | "Outgoing calls (→ 4 callees)" |
+
+### graph.json
+
+| | Upstream | Fork | Delta |
+|---|---|---|---|
+| Nodes | 37 | 37 | 0 |
+| Edges | 57 | **61** | **+4 cross-file calls** |
+| Size | 29.4 KB | **20.1 KB** | **-32%** |
+| Call resolution | — | 28/76 (37%) | — |
+| Entry points detected | — | 1 (server.py) | — |
+
+```bash
+# Reproduce yourself
+pip install graphifyy                        # baseline
+graphify update demos/toy-service             # baseline build
+pip install -e .                              # fork
+graphify update demos/toy-service             # fork build
+graphify explain "get_user()"                 # compare
+```
+
 ## Comparison: fork vs upstream on VSCode
 
 Full apple-to-apple validation against upstream PyPI `graphifyy==0.5.7` on Microsoft VSCode (9,936 files):

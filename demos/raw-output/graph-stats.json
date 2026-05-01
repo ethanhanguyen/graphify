@@ -1,0 +1,27 @@
+{
+  "out-baseline": {
+    "nodes": 37,
+    "edges": 57,
+    "size_bytes": 30131,
+    "size_kb": 29.4,
+    "graph_meta": {}
+  },
+  "out-fork": {
+    "nodes": 37,
+    "edges": 61,
+    "size_bytes": 20556,
+    "size_kb": 20.1,
+    "graph_meta": {
+      "schema_version": 2,
+      "call_resolution_stats": {
+        "resolved": 28,
+        "total": 76
+      },
+      "process_stats": {
+        "traced": 1,
+        "total_steps": 1,
+        "clustered": 0
+      }
+    }
+  }
+}

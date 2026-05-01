@@ -1,0 +1,11 @@
+Node: get_user()
+  ID:        toy_service_handlers_get_user
+  Source:    handlers.py L8
+  Type:      code
+  Community: 2
+  Degree:    3
+
+Connections (3):
+  --> validate_token() [calls] [INFERRED]
+  --> handlers.py [contains] [EXTRACTED]
+  --> me() [calls] [INFERRED]

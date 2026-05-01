@@ -24,6 +24,8 @@ class BM25Index:
     @staticmethod
     def _tokenize(text: str) -> list[str]:
         text = text.lower()
+        text = text.replace("_", " ")
+        text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
         text = re.sub(r"[^a-z0-9\s]", "", text)
         return [t for t in text.split() if len(t) >= 2]
 

@@ -1219,19 +1219,19 @@ def main() -> None:
             orch = build_orchestrator(G, use_embeddings=False)
             result = orch.search(question, {"limit": 10, "bm25_weight": 1.0})
             result_nodes = [nid for nid, _ in result["results"]]
-            if not result_nodes:
-                print("No matching nodes found.")
-                sys.exit(0)
             if result_nodes:
                 top_nid = result_nodes[0]
-            nodes = set(result_nodes)
-            edges: list[tuple] = []
-            for nid in nodes:
-                for nb in G.neighbors(nid):
-                    if nb in nodes:
-                        edges.append((nid, nb))
-            print(_subgraph_to_text(G, nodes, edges, token_budget=budget))
+                nodes = set(result_nodes)
+                edges: list[tuple] = []
+                for nid in nodes:
+                    for nb in G.neighbors(nid):
+                        if nb in nodes:
+                            edges.append((nid, nb))
+                print(_subgraph_to_text(G, nodes, edges, token_budget=budget))
         except ImportError:
+            pass
+
+        if top_nid is None:
             terms = [t.lower() for t in question.split() if len(t) > 2]
             scored = _score_nodes(G, terms)
             if not scored:
@@ -1570,11 +1570,7 @@ def main() -> None:
                 for nid, ndata in G.nodes(data=True):
                     if trace_name.lower() in (ndata.get("label", "")).lower():
                         sl = ndata.get("source_location", "0")
-                        line = 0
-                        for c in sl:
-                            if c.isdigit():
-                                line = int(sl)
-                                break
+                        line = int(sl.lstrip("L") or "0")
                         ep = EntryPoint(
                             name=ndata.get("label", nid),
                             kind="EVENT",
