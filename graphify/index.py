@@ -11,6 +11,8 @@ and O(1) confidence-filtered neighbor queries.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 import networkx as nx
 from graphify.code_schema import (
     NodeType,
@@ -140,6 +142,69 @@ class CompositeIndex:
             result = [n for n in result if n in match_ids]
         return list(set(result))
 
+    def to_dict(self) -> dict:
+        conf_dict = {f"{k[0]}|{k[1]}": v for k, v in self.confidence._conf.items()}
+        return {
+            "edge_types": self.edge_type.type_counts(),
+            "edge_type_keys": self.edge_type.edge_types(),
+            "edge_by_type": {k: list(v) for k, v in self.edge_type._by_type.items()},
+            "confidence": conf_dict,
+            "trie_nodes": self._serialize_trie(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "CompositeIndex":
+        idx = cls.__new__(cls)
+        conf_raw = data.get("confidence", {})
+        idx.confidence = ConfidenceBitmap.__new__(ConfidenceBitmap)
+        idx.confidence._conf = {
+            tuple(k.split("|", 1)): v for k, v in conf_raw.items() if "|" in k
+        }
+        idx.labels = cls._deserialize_trie(data.get("trie_nodes", {}))
+        idx.edge_type = EdgeTypeIndex.__new__(EdgeTypeIndex)
+        idx.edge_type._by_type = {
+            k: [(t[0], t[1]) if isinstance(t, list) else t for t in v]
+            for k, v in data.get("edge_by_type", {}).items()
+        }
+        idx.edge_type._by_type_undirected = {}
+        for rel, pairs in idx.edge_type._by_type.items():
+            undirected = set()
+            for u, v in pairs:
+                undirected.add((u, v) if u <= v else (v, u))
+            idx.edge_type._by_type_undirected[rel] = undirected
+        return idx
+
+    def _serialize_trie(self) -> dict:
+        queue: list[tuple[str, NodeLabelTrie]] = [("", self.labels)]
+        result: dict[str, list[str]] = {}
+        while queue:
+            path, node = queue.pop(0)
+            if node._node_ids:
+                result[path or "_"] = node._node_ids
+            for ch in sorted(node._children):
+                queue.append((path + ch, node._children[ch]))
+        return result
+
+    @classmethod
+    def _deserialize_trie(cls, data: dict) -> NodeLabelTrie:
+        trie = NodeLabelTrie.__new__(NodeLabelTrie)
+        trie._children = {}
+        trie._node_ids = []
+        for path, node_ids in data.items():
+            if path == "_":
+                trie._node_ids = node_ids
+                continue
+            node = trie
+            for ch in path:
+                if ch not in node._children:
+                    child = NodeLabelTrie.__new__(NodeLabelTrie)
+                    child._children = {}
+                    child._node_ids = []
+                    node._children[ch] = child
+                node = node._children[ch]
+            node._node_ids = node_ids
+        return trie
+
 
 def build_indexes(G: nx.Graph) -> CompositeIndex:
     """Build all indexes on a graph. Attaches index to G.graph dict."""
@@ -155,3 +220,29 @@ def has_index(G: nx.Graph) -> bool:
 
 def get_index(G: nx.Graph) -> CompositeIndex | None:
     return G.graph.get("index") if has_index(G) else None
+
+
+def save_indexes(G: nx.Graph, output_path: str) -> None:
+    index = get_index(G) or build_indexes(G)
+    p = Path(output_path).with_suffix(".index.json")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(index.to_dict(), f, separators=(",", ":"))
+
+
+def load_indexes(path: str) -> CompositeIndex | None:
+    p = Path(path).with_suffix(".index.json")
+    if not p.exists():
+        return None
+    with open(p, encoding="utf-8") as f:
+        data = json.load(f)
+    return CompositeIndex.from_dict(data)
+
+
+def load_or_build_indexes(G: nx.Graph, graph_path: str) -> CompositeIndex:
+    idx = load_indexes(graph_path)
+    if idx is None:
+        idx = build_indexes(G)
+    else:
+        G.graph["index"] = idx
+    return idx

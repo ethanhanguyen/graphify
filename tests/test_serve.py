@@ -12,6 +12,9 @@ from graphify.serve import (
     _subgraph_to_text,
     _load_graph,
     _find_node,
+    _bidirectional_shortest_path,
+    _weighted_dijkstra,
+    _astar,
 )
 
 
@@ -229,3 +232,68 @@ class TestFindNodeRanked:
         G.add_node("short", label="app.ts", source_file="src/app.ts")
         result = _find_node(G, "app.ts")
         assert result[0] == "short"
+
+
+class TestPathAlgorithms:
+    def _make_path_graph(self):
+        G = nx.Graph()
+        G.add_node("a", label="A", source_file="src/a.ts", community=1)
+        G.add_node("b", label="B", source_file="src/b.ts", community=1)
+        G.add_node("c", label="C", source_file="src/c.ts", community=2)
+        G.add_node("d", label="D", source_file="src/d.ts", community=2)
+        G.add_edge("a", "b", relation="CALLS", confidence="EXTRACTED", confidence_score=1.0)
+        G.add_edge("b", "c", relation="CALLS", confidence="INFERRED", confidence_score=0.5)
+        G.add_edge("c", "d", relation="CALLS", confidence="EXTRACTED", confidence_score=1.0)
+        return G
+
+    def test_bidirectional_finds_path(self):
+        G = self._make_path_graph()
+        path, hops = _bidirectional_shortest_path(G, "a", "d")
+        assert len(path) == 4
+        assert hops == 3
+
+    def test_bidirectional_no_path(self):
+        G = nx.Graph()
+        G.add_node("a", label="A")
+        G.add_node("b", label="B")
+        path, hops = _bidirectional_shortest_path(G, "a", "b")
+        assert path == []
+        assert hops == -1
+
+    def test_bidirectional_max_hops(self):
+        G = self._make_path_graph()
+        path, hops = _bidirectional_shortest_path(G, "a", "d", max_hops=1)
+        assert hops == -1
+
+    def test_dijkstra_finds_path(self):
+        G = self._make_path_graph()
+        path, score = _weighted_dijkstra(G, "a", "d")
+        assert len(path) == 4
+        assert score > 0
+
+    def test_dijkstra_no_path(self):
+        G = nx.Graph()
+        G.add_node("a", label="A")
+        G.add_node("b", label="B")
+        path, score = _weighted_dijkstra(G, "a", "b")
+        assert path == []
+        assert score == -1.0
+
+    def test_astar_finds_path(self):
+        G = self._make_path_graph()
+        path, hops = _astar(G, "a", "d")
+        assert len(path) == 4
+        assert hops == 3
+
+    def test_astar_same_node(self):
+        G = self._make_path_graph()
+        path, hops = _astar(G, "a", "a")
+        assert path == ["a"]
+        assert hops == 0
+
+    def test_astar_no_path(self):
+        G = nx.Graph()
+        G.add_node("a", label="A")
+        G.add_node("b", label="B")
+        path, hops = _astar(G, "a", "b")
+        assert hops == -1

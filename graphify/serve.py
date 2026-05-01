@@ -35,9 +35,15 @@ def _load_graph_file(graph_path: str | Path) -> nx.Graph:
     except json.JSONDecodeError as exc:
         raise ValueError(f"graph.json is corrupted ({exc}). Re-run /graphify to rebuild.") from exc
     try:
-        return json_graph.node_link_graph(data, edges="links")
+        G = json_graph.node_link_graph(data, edges="links")
     except TypeError:
-        return json_graph.node_link_graph(data)
+        G = json_graph.node_link_graph(data)
+    try:
+        from graphify.index import load_or_build_indexes
+        load_or_build_indexes(G, str(p))
+    except Exception:
+        pass
+    return G
 
 
 def _load_graph(graph_path: str) -> nx.Graph:

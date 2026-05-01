@@ -331,8 +331,12 @@ def to_json(G: nx.Graph, communities: dict[int, list[str]], output_path: str, *,
         link.pop("_src", None)
         link.pop("_tgt", None)
     data["hyperedges"] = getattr(G, "graph", {}).get("hyperedges", [])
+    G.graph.pop("index", None)
     with open(output_path, "w", encoding="utf-8") as f:  # nosec
         json.dump(data, f, separators=(",", ":"))
+    from graphify.index import build_indexes, save_indexes
+    build_indexes(G)
+    save_indexes(G, output_path)
     return True
 
 
