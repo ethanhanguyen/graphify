@@ -1,6 +1,6 @@
 import networkx as nx
 
-from graphify.search import SearchOrchestrator, hybrid_search
+from graphify.search import SearchOrchestrator, hybrid_search, build_orchestrator
 
 
 def _make_graph():
@@ -118,3 +118,24 @@ def test_search_with_process_grouping_empty():
     G.add_node("x", label="zzz_nonexistent_item")
     result = hybrid_search("this_definitely_wont_match_anything", G)
     assert result["processes"] == {}
+
+
+def test_build_orchestrator_without_embeddings():
+    G = _make_graph()
+    orch = build_orchestrator(G, use_embeddings=False)
+    assert orch._embeddings is False
+    result = orch.search("embedding", {"limit": 5})
+    assert result["mode"] == "bm25"
+    assert len(result["results"]) >= 1
+
+
+def test_build_orchestrator_result_format():
+    G = _make_graph()
+    orch = build_orchestrator(G, use_embeddings=False)
+    result = orch.search("attention", {"limit": 3})
+    assert "results" in result
+    assert "mode" in result
+    assert "total_candidates" in result
+    for nid, score in result["results"]:
+        assert isinstance(nid, str)
+        assert isinstance(score, float)

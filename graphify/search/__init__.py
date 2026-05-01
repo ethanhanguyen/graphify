@@ -68,3 +68,10 @@ class SearchOrchestrator:
 def hybrid_search(query_text: str, graph, options: dict | None = None) -> dict:
     orch = SearchOrchestrator(graph)
     return orch.search(query_text, options)
+
+
+def build_orchestrator(graph: nx.Graph, use_embeddings: bool = False) -> SearchOrchestrator:
+    orch = SearchOrchestrator(graph)
+    if not use_embeddings:
+        orch._embeddings = False
+    return orch
