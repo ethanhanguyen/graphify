@@ -11,6 +11,7 @@ from graphify.serve import (
     _dfs,
     _subgraph_to_text,
     _load_graph,
+    _find_node,
 )
 
 
@@ -151,3 +152,80 @@ def test_load_graph_missing_file(tmp_path):
     graphify_dir.mkdir()
     with pytest.raises(SystemExit):
         _load_graph(str(graphify_dir / "nonexistent.json"))
+
+
+class TestFindNodeRanked:
+    def _make_graph(self):
+        G = nx.Graph()
+        G.graph["schema_version"] = 2
+        G.add_node("n1", label="uri.ts", source_file="src/vs/base/common/uri.ts", source_location="L1")
+        G.add_node("n2", label="uri.ts", source_file="extensions/terminal-suggest/src/helpers/uri.ts", source_location="L1")
+        G.add_node("n3", label="uri.ts", source_file="extensions/copilot/src/deep/uri.ts", source_location="L1")
+        for i, n in enumerate(["n1", "n2", "n3"], 1):
+            for _ in range(i):
+                G.add_node(f"nb_{n}_{_}", label=f"neighbor_{_}")
+                G.add_edge(n, f"nb_{n}_{_}", relation="imports")
+        return G
+
+    def test_exact_label_match_ranks_first(self):
+        G = nx.Graph()
+        G.add_node("a", label="uri.ts", source_file="src/vs/uri.ts")
+        G.add_node("b", label="UriHelper.ts", source_file="ext/helper.ts")
+        result = _find_node(G, "uri.ts")
+        assert result[0] == "a"
+
+    def test_shorter_path_beats_deeper(self):
+        G = nx.Graph()
+        G.add_node("a", label="event.ts", source_file="src/vs/base/common/event.ts")
+        G.add_node("b", label="event.ts", source_file="extensions/a/b/c/d/e/event.ts")
+        result = _find_node(G, "event.ts")
+        assert result[0] == "a"
+
+    def test_higher_degree_beats_lower_for_same_depth(self):
+        G = nx.Graph()
+        G.add_node("a", label="foo.ts", source_file="src/foo.ts")
+        G.add_node("b", label="foo.ts", source_file="lib/foo.ts")
+        for _ in range(5):
+            G.add_node(f"nb_{_}", label="x")
+            G.add_edge("a", f"nb_{_}", relation="imports")
+        G.add_edge("b", "nb_0", relation="imports")
+        result = _find_node(G, "foo.ts")
+        assert result[0] == "a"
+
+    def test_no_match_returns_empty(self):
+        G = nx.Graph()
+        G.add_node("a", label="alpha")
+        result = _find_node(G, "nonexistent")
+        assert result == []
+
+    def test_diacritic_insensitive(self):
+        G = nx.Graph()
+        G.add_node("a", label="café.ts")
+        result = _find_node(G, "cafe")
+        assert result[0] == "a"
+
+    def test_exact_match_beats_substring(self):
+        G = nx.Graph()
+        G.add_node("b", label="sessionRequestLifecycle.ts", source_file="src/sessionRequestLifecycle.ts")
+        G.add_node("a", label="lifecycle.ts", source_file="src/vs/base/common/lifecycle.ts")
+        result = _find_node(G, "lifecycle.ts")
+        assert result[0] == "a"
+
+    def test_fname_match_boosts_score(self):
+        G = nx.Graph()
+        G.add_node("b", label="HelperClass", source_file="extensions/deep/nested/event.ts")
+        G.add_node("a", label="OtherClass", source_file="src/vs/base/common/event.ts")
+        result = _find_node(G, "event.ts")
+        assert result[0] == "a"
+
+    def test_vscode_like_scenario(self):
+        G = self._make_graph()
+        result = _find_node(G, "uri.ts")
+        assert result[0] == "n1"
+
+    def test_tiebreaker_shorter_id_wins(self):
+        G = nx.Graph()
+        G.add_node("longer_nid_here", label="app.ts", source_file="src/app.ts")
+        G.add_node("short", label="app.ts", source_file="src/app.ts")
+        result = _find_node(G, "app.ts")
+        assert result[0] == "short"

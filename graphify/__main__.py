@@ -1243,7 +1243,7 @@ def main() -> None:
         if len(sys.argv) < 4:
             print("Usage: graphify path \"<source>\" \"<target>\" [--graph path]", file=sys.stderr)
             sys.exit(1)
-        from graphify.serve import _score_nodes, _load_graph_file
+        from graphify.serve import _find_node, _load_graph_file
         import networkx as _nx
         source_label = sys.argv[2]
         target_label = sys.argv[3]
@@ -1254,15 +1254,15 @@ def main() -> None:
                 graph_path = args[i + 1]
         gp = Path(graph_path).resolve()
         G = _load_graph_file(gp)
-        src_scored = _score_nodes(G, [t.lower() for t in source_label.split()])
-        tgt_scored = _score_nodes(G, [t.lower() for t in target_label.split()])
-        if not src_scored:
+        src_matches = _find_node(G, source_label)
+        tgt_matches = _find_node(G, target_label)
+        if not src_matches:
             print(f"No node matching '{source_label}' found.", file=sys.stderr)
             sys.exit(1)
-        if not tgt_scored:
+        if not tgt_matches:
             print(f"No node matching '{target_label}' found.", file=sys.stderr)
             sys.exit(1)
-        src_nid, tgt_nid = src_scored[0][1], tgt_scored[0][1]
+        src_nid, tgt_nid = src_matches[0], tgt_matches[0]
         try:
             path_nodes = _nx.shortest_path(G, src_nid, tgt_nid)
         except (_nx.NetworkXNoPath, _nx.NodeNotFound):

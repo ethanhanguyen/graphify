@@ -323,11 +323,35 @@ def _subgraph_to_text(G: nx.Graph, nodes: set[str], edges: list[tuple], token_bu
 
 
 def _find_node(G: nx.Graph, label: str) -> list[str]:
-    """Return node IDs whose label or ID matches the search term (diacritic-insensitive)."""
+    """Return node IDs ranked by relevance (exact match > path depth > degree).
+
+    Scoring:
+    - Exact label match: +100
+    - Source file name matches search term: +50
+    - Shallow file path (core module): +max(0, 30 - slash_count)
+    - Core module bonus (no ext/test in path): +15
+    - High degree (central node): +min(degree, 15)
+    - Tiebreaker: shorter node ID
+    """
     term = _strip_diacritics(label).lower()
-    return [nid for nid, d in G.nodes(data=True)
-            if term in (d.get("norm_label") or _strip_diacritics(d.get("label") or "").lower())
-            or term == nid.lower()]
+    scored: list[tuple[float, str]] = []
+    for nid, d in G.nodes(data=True):
+        norm = d.get("norm_label") or _strip_diacritics(d.get("label") or "").lower()
+        src = (d.get("source_file") or "").lower()
+        if term not in norm and term != nid.lower() and term not in src:
+            continue
+        exact = 100.0 if norm == term else 0
+        fname = src.rsplit("/", 1)[-1] if "/" in src else src
+        fname = _strip_diacritics(fname).lower()
+        fname_bonus = 50.0 if term in fname else 0
+        depth = src.count("/") if src else 999
+        depth_score = max(0.0, 30.0 - float(depth))
+        core_bonus = 15.0 if "extension" not in src and "test/" not in src else 0
+        deg = min(G.degree(nid), 15)
+        score = exact + fname_bonus + depth_score + core_bonus + float(deg)
+        scored.append((score, nid))
+    scored.sort(key=lambda x: (-x[0], len(x[1])))
+    return [nid for _, nid in scored]
 
 
 def _filter_blank_stdin() -> None:
