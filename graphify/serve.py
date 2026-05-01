@@ -6,6 +6,7 @@ from pathlib import Path
 import networkx as nx
 from networkx.readwrite import json_graph
 from graphify.security import sanitize_label
+from graphify.query_cache import get_cache, reseed_cache
 
 _CONFIDENCE_PRIORITY = {"EXTRACTED": 0, "INFERRED": 1, "AMBIGUOUS": 2}
 
@@ -475,6 +476,11 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
                     },
                 },
             ),
+            types.Tool(
+                name="cache_stats",
+                description="Return query cache statistics: hit rate, size, tracked files.",
+                inputSchema={"type": "object", "properties": {}},
+            ),
         ]
 
     def _tool_query_graph(arguments: dict) -> str:
@@ -483,6 +489,14 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         depth = min(int(arguments.get("depth", 3)), 6)
         budget = int(arguments.get("token_budget", 2000))
         limit = int(arguments.get("limit", 10))
+
+        cache = get_cache()
+        file_hashes = reseed_cache(graph_path)
+        cached_result = cache.get("query_graph", {
+            "question": question, "mode": mode, "depth": depth, "limit": limit
+        }, file_hashes)
+        if cached_result is not None:
+            return cached_result
 
         if mode == "hybrid":
             try:
@@ -507,7 +521,11 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
                     for o in orphaned[:5]:
                         lines.append(f"  - {o.get('name', '?')} [{o.get('type', '')}]")
                 lines.append(f"\nTotal: {results.get('total_results', 0)} results")
-                return "\n".join(lines)
+                result_str = "\n".join(lines)
+                cache.set("query_graph", {
+                    "question": question, "mode": mode, "depth": depth, "limit": limit
+                }, result_str, file_hashes)
+                return result_str
             except ImportError:
                 mode = "bfs"
 
@@ -518,7 +536,11 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
             return "No matching nodes found."
         nodes, edges = _dfs(G, start_nodes, depth) if mode == "dfs" else _bfs(G, start_nodes, depth)
         header = f"Traversal: {mode.upper()} depth={depth} | Start: {[G.nodes[n].get('label', n) for n in start_nodes]} | {len(nodes)} nodes found\n\n"
-        return header + _subgraph_to_text(G, nodes, edges, budget)
+        result_str = header + _subgraph_to_text(G, nodes, edges, budget)
+        cache.set("query_graph", {
+            "question": question, "mode": mode, "depth": depth, "limit": limit
+        }, result_str, file_hashes)
+        return result_str
 
     def _tool_get_node(arguments: dict) -> str:
         label = arguments["label"].lower()
@@ -854,6 +876,15 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         except ImportError:
             return "Change detection not available."
 
+    def _tool_cache_stats(_: dict) -> str:
+        cache = get_cache()
+        stats = cache.hit_rate
+        return (
+            f"Query Cache Stats\n"
+            f"  Cached entries: {stats['cached_entries']}\n"
+            f"  Tracked files: {stats['tracked_files']}"
+        )
+
     _handlers = {
         "query_graph": _tool_query_graph,
         "get_node": _tool_get_node,
@@ -866,6 +897,7 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         "impact": _tool_impact,
         "trace": _tool_trace,
         "detect_changes": _tool_detect_changes,
+        "cache_stats": _tool_cache_stats,
     }
 
     @server.call_tool()

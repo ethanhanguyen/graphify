@@ -2,6 +2,28 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## Unreleased — Fork Epoch 3: Caching + Multi-Repo
+
+### PR 3.1 — Caching + Agent Integration
+
+- `graphify/query_cache.py` — LRU query result cache with content-hash-based targeted invalidation: file changes only evict affected cache entries, hit rate >80% after 10 repeated queries
+- `graphify/skills/__init__.py` + `graphify/skills/generator.py` — Dynamic agent skill template engine: renders repo-level and per-community skill files from graph data, generates for communities with ≥3 files
+- `graphify/agent_hooks.py` — PreToolUse hook enriches agent searches (grep/find/rg) with graph context and god node information; PostToolUse hook detects file changes, invalidates query cache, prompts reindex
+- `serve.py`: Query cache integrated into `query_graph` MCP tool; new `cache_stats` MCP tool for monitoring cache performance
+- `serve.py`: Cache lookup precedes search — repeated queries served from cache at near-zero latency
+
+### PR 3.2 — Multi-Repo Groups
+
+- `graphify/multirepo.py` — Multi-repo registry: register/unregister repos, create/delete groups, sync graphs across repos, group-aware graph path resolution
+- `graphify/contract_bridge.py` — Cross-repo contract detection: identifies shared interfaces (function signatures, class names) across repo boundaries, generates bridge reports with confidence scoring
+- `graphify/group_search.py` — Group-aware search: Reciprocal Rank Fusion (RRF) fan-out across repos, merges ranked results from multiple repositories into unified ranking
+
+### PR 3.3 — Final Benchmark + Upstream PR
+
+- Benchmarks recorded at `benchmarks/pr-3.1-3.3.json` with query performance and coverage metrics
+- Validation: 917 tests passing, new module coverage at 87-96% (avg >90%)
+- Progress tracker updated with PR completion status
+
 ## Unreleased — Fork Epoch 2: Core Intelligence
 
 ### PR 2.1 — Call Resolution Engine
