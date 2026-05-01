@@ -1,0 +1,365 @@
+{
+  "benchmark": "vscode-swebench",
+  "timestamp": "2026-05-01T00:11:50",
+  "graph": {
+    "file_size_mb": 164.0,
+    "nodes": 111670,
+    "edges": 249627,
+    "schema_version": 2
+  },
+  "summary": {
+    "query_p50": 1488.1,
+    "query_p95": 1864.3,
+    "query_avg": 1527.9,
+    "query_errors": 0,
+    "query_total": 15,
+    "path_p50": 1470.1,
+    "path_p95": 1597.2,
+    "path_avg": 1498.5,
+    "path_errors": 1,
+    "path_total": 8,
+    "path_hops_p50": 4.5,
+    "explain_p50": 1390.3,
+    "explain_p95": 1517.0,
+    "explain_avg": 1398.3,
+    "explain_errors": 0,
+    "explain_total": 10
+  },
+  "queries": [
+    {
+      "category": "architecture",
+      "question": "how does lifecycle.ts work",
+      "elapsed_ms": 1864.3,
+      "output_lines": 52,
+      "stdout_preview": "NODE localize() [src=src/vs/nls.ts loc=L85 community=1]\nNODE chatListRenderer.ts [src=src/vs/workbench/contrib/chat/browser/widget/chatListRenderer.ts loc=L1 community=0]\nNODE chatViewModel.ts [src=src/vs/workbench/contrib/chat/common/model/chatViewModel.ts loc=L1 community=0]\nNODE ChatListItemRenderer [src=src/vs/workbench/contrib/chat/browser/widget/chatListRenderer.ts loc=L184 community=42]\nNODE isResponseVM() [src=src/vs/workbench/contrib/chat/common/model/chatViewModel.ts loc=L27 community=",
+      "stderr": "",
+      "rc": 0,
+      "hops": null
+    },
+    {
+      "category": "architecture",
+      "question": "what is the purpose of localize()",
+      "elapsed_ms": 1584.4,
+      "output_lines": 59,
+      "stdout_preview": "NODE testUtils.ts [src=extensions/typescript-language-features/src/test/testUtils.ts loc=L1 community=78]\nNODE withRandomFileEditor() [src=extensions/emmet/src/test/testUtils.ts loc=L58 community=78]\nNODE createRandomFile() [src=extensions/emmet/src/test/testUtils.ts loc=L20 community=78]\nNODE testUtils.ts [src=extensions/emmet/src/test/testUtils.ts loc=L1 community=78]\nNODE MockAuthenticationService [src=extensions/copilot/src/platform/ignore/node/test/mockAuthenticationService.ts loc=L15 commu",
+      "stderr": "",
+      "rc": 0,
+      "hops": null
+    },
+    {
+      "category": "architecture",
+      "question": "explain how uri.ts is used",
+      "elapsed_ms": 1478.0,
+      "output_lines": 74,
+      "stdout_preview": "NODE lifecycle.ts [src=src/vs/base/common/lifecycle.ts loc=L1 community=0]\nNODE uri.ts [src=src/vs/base/common/uri.ts loc=L1 community=0]\nNODE event.ts [src=src/vs/base/common/event.ts loc=L1 community=0]\nNODE nls.ts [src=src/vs/nls.ts loc=L1 community=0]\nNODE instantiation.ts [src=src/vs/platform/instantiation/common/instantiation.ts loc=L1 community=0]\nNODE log.ts [src=src/vs/platform/log/common/log.ts loc=L1 community=0]\nNODE utils.ts [src=src/vs/base/test/common/utils.ts loc=L1 community=0]\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": null
+    },
+    {
+      "category": "architecture",
+      "question": "what role does event.ts play",
+      "elapsed_ms": 1483.1,
+      "output_lines": 62,
+      "stdout_preview": "NODE localize() [src=src/vs/nls.ts loc=L85 community=1]\nNODE nls.ts [src=src/vs/nls.ts loc=L1 community=0]\nNODE cancellation.ts [src=src/vs/base/common/cancellation.ts loc=L1 community=0]\nNODE codicons.ts [src=src/vs/base/common/codicons.ts loc=L1 community=0]\nNODE .string() [src=src/vs/editor/common/config/editorOptions.ts loc=L1348 community=10]\nNODE htmlContent.ts [src=src/vs/base/common/htmlContent.ts loc=L1 community=0]\nNODE languageModelToolsService.ts [src=src/vs/workbench/contrib/chat/co",
+      "stderr": "",
+      "rc": 0,
+      "hops": null
+    },
+    {
+      "category": "dependency",
+      "question": "how does instantiation.ts work",
+      "elapsed_ms": 1448.9,
+      "output_lines": 52,
+      "stdout_preview": "NODE localize() [src=src/vs/nls.ts loc=L85 community=1]\nNODE chatListRenderer.ts [src=src/vs/workbench/contrib/chat/browser/widget/chatListRenderer.ts loc=L1 community=0]\nNODE chatViewModel.ts [src=src/vs/workbench/contrib/chat/common/model/chatViewModel.ts loc=L1 community=0]\nNODE ChatListItemRenderer [src=src/vs/workbench/contrib/chat/browser/widget/chatListRenderer.ts loc=L184 community=42]\nNODE isResponseVM() [src=src/vs/workbench/contrib/chat/common/model/chatViewModel.ts loc=L27 community=",
+      "stderr": "",
+      "rc": 0,
+      "hops": null
+    },
+    {
+      "category": "dependency",
+      "question": "show dependencies of extensions.ts",
+      "elapsed_ms": 1464.6,
+      "output_lines": 74,
+      "stdout_preview": "NODE lifecycle.ts [src=src/vs/base/common/lifecycle.ts loc=L1 community=0]\nNODE uri.ts [src=src/vs/base/common/uri.ts loc=L1 community=0]\nNODE event.ts [src=src/vs/base/common/event.ts loc=L1 community=0]\nNODE nls.ts [src=src/vs/nls.ts loc=L1 community=0]\nNODE instantiation.ts [src=src/vs/platform/instantiation/common/instantiation.ts loc=L1 community=0]\nNODE log.ts [src=src/vs/platform/log/common/log.ts loc=L1 community=0]\nNODE utils.ts [src=src/vs/base/test/common/utils.ts loc=L1 community=0]\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": null
+    },
+    {
+      "category": "callgraph",
+      "question": "what calls ICommandService",
+      "elapsed_ms": 1517.5,
+      "output_lines": 74,
+      "stdout_preview": "NODE lifecycle.ts [src=src/vs/base/common/lifecycle.ts loc=L1 community=0]\nNODE localize() [src=src/vs/nls.ts loc=L85 community=1]\nNODE uri.ts [src=src/vs/base/common/uri.ts loc=L1 community=0]\nNODE event.ts [src=src/vs/base/common/event.ts loc=L1 community=0]\nNODE nls.ts [src=src/vs/nls.ts loc=L1 community=0]\nNODE instantiation.ts [src=src/vs/platform/instantiation/common/instantiation.ts loc=L1 community=0]\nNODE log.ts [src=src/vs/platform/log/common/log.ts loc=L1 community=0]\nNODE utils.ts [s",
+      "stderr": "",
+      "rc": 0,
+      "hops": null
+    },
+    {
+      "category": "callgraph",
+      "question": "how does workbench contribute to editor services",
+      "elapsed_ms": 1509.5,
+      "output_lines": 72,
+      "stdout_preview": "NODE lifecycle.ts [src=src/vs/base/common/lifecycle.ts loc=L1 community=0]\nNODE localize() [src=src/vs/nls.ts loc=L85 community=1]\nNODE uri.ts [src=src/vs/base/common/uri.ts loc=L1 community=0]\nNODE event.ts [src=src/vs/base/common/event.ts loc=L1 community=0]\nNODE nls.ts [src=src/vs/nls.ts loc=L1 community=0]\nNODE instantiation.ts [src=src/vs/platform/instantiation/common/instantiation.ts loc=L1 community=0]\nNODE log.ts [src=src/vs/platform/log/common/log.ts loc=L1 community=0]\nNODE utils.ts [s",
+      "stderr": "",
+      "rc": 0,
+      "hops": null
+    },
+    {
+      "category": "startup",
+      "question": "trace the startup process from main.ts",
+      "elapsed_ms": 1479.3,
+      "output_lines": 74,
+      "stdout_preview": "NODE lifecycle.ts [src=src/vs/base/common/lifecycle.ts loc=L1 community=0]\nNODE localize() [src=src/vs/nls.ts loc=L85 community=1]\nNODE uri.ts [src=src/vs/base/common/uri.ts loc=L1 community=0]\nNODE event.ts [src=src/vs/base/common/event.ts loc=L1 community=0]\nNODE nls.ts [src=src/vs/nls.ts loc=L1 community=0]\nNODE instantiation.ts [src=src/vs/platform/instantiation/common/instantiation.ts loc=L1 community=0]\nNODE log.ts [src=src/vs/platform/log/common/log.ts loc=L1 community=0]\nNODE utils.ts [s",
+      "stderr": "",
+      "rc": 0,
+      "hops": null
+    },
+    {
+      "category": "cross-module",
+      "question": "what is the relationship between textModel and editor",
+      "elapsed_ms": 1560.6,
+      "output_lines": 73,
+      "stdout_preview": "NODE lifecycle.ts [src=src/vs/base/common/lifecycle.ts loc=L1 community=0]\nNODE uri.ts [src=src/vs/base/common/uri.ts loc=L1 community=0]\nNODE event.ts [src=src/vs/base/common/event.ts loc=L1 community=0]\nNODE nls.ts [src=src/vs/nls.ts loc=L1 community=0]\nNODE instantiation.ts [src=src/vs/platform/instantiation/common/instantiation.ts loc=L1 community=0]\nNODE log.ts [src=src/vs/platform/log/common/log.ts loc=L1 community=0]\nNODE utils.ts [src=src/vs/base/test/common/utils.ts loc=L1 community=0]\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": null
+    },
+    {
+      "category": "cross-module",
+      "question": "how does notebook support interact with the editor",
+      "elapsed_ms": 1660.8,
+      "output_lines": 71,
+      "stdout_preview": "NODE lifecycle.ts [src=src/vs/base/common/lifecycle.ts loc=L1 community=0]\nNODE localize() [src=src/vs/nls.ts loc=L85 community=1]\nNODE uri.ts [src=src/vs/base/common/uri.ts loc=L1 community=0]\nNODE event.ts [src=src/vs/base/common/event.ts loc=L1 community=0]\nNODE nls.ts [src=src/vs/nls.ts loc=L1 community=0]\nNODE instantiation.ts [src=src/vs/platform/instantiation/common/instantiation.ts loc=L1 community=0]\nNODE utils.ts [src=src/vs/base/test/common/utils.ts loc=L1 community=0]\nNODE configurat",
+      "stderr": "",
+      "rc": 0,
+      "hops": null
+    },
+    {
+      "category": "cross-module",
+      "question": "what connects terminal to the renderer",
+      "elapsed_ms": 1488.1,
+      "output_lines": 69,
+      "stdout_preview": "NODE lifecycle.ts [src=src/vs/base/common/lifecycle.ts loc=L1 community=0]\nNODE uri.ts [src=src/vs/base/common/uri.ts loc=L1 community=0]\nNODE event.ts [src=src/vs/base/common/event.ts loc=L1 community=0]\nNODE nls.ts [src=src/vs/nls.ts loc=L1 community=0]\nNODE log.ts [src=src/vs/platform/log/common/log.ts loc=L1 community=0]\nNODE utils.ts [src=src/vs/base/test/common/utils.ts loc=L1 community=0]\nNODE configuration.ts [src=src/vs/platform/configuration/common/configuration.ts loc=L1 community=0]\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": null
+    },
+    {
+      "category": "search",
+      "question": "how are keybindings resolved",
+      "elapsed_ms": 1414.4,
+      "output_lines": 60,
+      "stdout_preview": "NODE localize() [src=src/vs/nls.ts loc=L85 community=1]\nNODE utils.ts [src=src/vs/base/test/common/utils.ts loc=L1 community=0]\nNODE contextkey.ts [src=src/vs/platform/contextkey/common/contextkey.ts loc=L1 community=0]\nNODE platform.ts [src=src/vs/base/common/platform.ts loc=L1 community=0]\nNODE actions.ts [src=src/vs/platform/actions/common/actions.ts loc=L1 community=0]\nNODE arrays.ts [src=src/vs/base/common/arrays.ts loc=L1 community=0]\nNODE commands.ts [src=src/vs/platform/commands/common/c",
+      "stderr": "",
+      "rc": 0,
+      "hops": null
+    },
+    {
+      "category": "search",
+      "question": "what is the file system provider API",
+      "elapsed_ms": 1509.6,
+      "output_lines": 68,
+      "stdout_preview": "NODE lifecycle.ts [src=src/vs/base/common/lifecycle.ts loc=L1 community=0]\nNODE uri.ts [src=src/vs/base/common/uri.ts loc=L1 community=0]\nNODE event.ts [src=src/vs/base/common/event.ts loc=L1 community=0]\nNODE nls.ts [src=src/vs/nls.ts loc=L1 community=0]\nNODE instantiation.ts [src=src/vs/platform/instantiation/common/instantiation.ts loc=L1 community=0]\nNODE log.ts [src=src/vs/platform/log/common/log.ts loc=L1 community=0]\nNODE utils.ts [src=src/vs/base/test/common/utils.ts loc=L1 community=0]\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": null
+    },
+    {
+      "category": "statusbar",
+      "question": "how is the status bar implemented",
+      "elapsed_ms": 1456.1,
+      "output_lines": 68,
+      "stdout_preview": "NODE lifecycle.ts [src=src/vs/base/common/lifecycle.ts loc=L1 community=0]\nNODE localize() [src=src/vs/nls.ts loc=L85 community=1]\nNODE uri.ts [src=src/vs/base/common/uri.ts loc=L1 community=0]\nNODE event.ts [src=src/vs/base/common/event.ts loc=L1 community=0]\nNODE nls.ts [src=src/vs/nls.ts loc=L1 community=0]\nNODE instantiation.ts [src=src/vs/platform/instantiation/common/instantiation.ts loc=L1 community=0]\nNODE configuration.ts [src=src/vs/platform/configuration/common/configuration.ts loc=L1",
+      "stderr": "",
+      "rc": 0,
+      "hops": null
+    }
+  ],
+  "paths": [
+    {
+      "elapsed_ms": 1460.9,
+      "output_lines": 2,
+      "stdout_preview": "Shortest path (3 hops):\n  lifecycle.ts --imports_from [EXTRACTED]--> languageDetection.contribution.ts --imports_from [EXTRACTED]--> nls.ts --contains [EXTRACTED]--> localize()\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": 3,
+      "source": "lifecycle.ts",
+      "target": "localize()"
+    },
+    {
+      "elapsed_ms": 1459.1,
+      "output_lines": 2,
+      "stdout_preview": "Shortest path (5 hops):\n  testingUri.ts --imports_from [EXTRACTED]--> testingDecorations.ts --imports_from [EXTRACTED]--> lifecycle.ts --imports_from [EXTRACTED]--> time.ts --imports_from [EXTRACTED]--> base.ts --imports_from [EXTRACTED]--> valueWithChangeEvent.ts\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": 5,
+      "source": "uri.ts",
+      "target": "event.ts"
+    },
+    {
+      "elapsed_ms": 1519.3,
+      "output_lines": 0,
+      "stdout_preview": "",
+      "stderr": "No node matching 'IInstantiationService' found.\n",
+      "rc": 1,
+      "hops": null,
+      "source": "instantiation.ts",
+      "target": "IInstantiationService"
+    },
+    {
+      "elapsed_ms": 1503.6,
+      "output_lines": 1,
+      "stdout_preview": "No path found between 'workbench.ts' and 'editorWorkerService'.\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": null,
+      "source": "workbench.ts",
+      "target": "editorWorkerService"
+    },
+    {
+      "elapsed_ms": 1470.1,
+      "output_lines": 2,
+      "stdout_preview": "Shortest path (7 hops):\n  main.ts --contains [EXTRACTED]--> ensureStableCode() --calls [INFERRED]--> retry() --contains [EXTRACTED]--> async.ts --imports_from [EXTRACTED]--> storage.ts --imports_from [EXTRACTED]--> mergeEditor.ts --contains [EXTRACTED]--> MergeEditor --method [EXTRACTED]--> .createEditorControl()\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": 7,
+      "source": "main.ts",
+      "target": "createEditor"
+    },
+    {
+      "elapsed_ms": 1529.7,
+      "output_lines": 1,
+      "stdout_preview": "No path found between 'commandService' and 'keybindingService'.\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": null,
+      "source": "commandService",
+      "target": "keybindingService"
+    },
+    {
+      "elapsed_ms": 1597.2,
+      "output_lines": 2,
+      "stdout_preview": "Shortest path (4 hops):\n  WorkerTextModelSyncServer --contains [EXTRACTED]--> textModelSync.impl.ts --imports_from [EXTRACTED]--> lifecycle.ts --imports_from [EXTRACTED]--> observableCodeEditor.test.ts --contains [EXTRACTED]--> withEditorSetupTestFixture()\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": 4,
+      "source": "textModel",
+      "target": "editor"
+    },
+    {
+      "elapsed_ms": 1468.9,
+      "output_lines": 1,
+      "stdout_preview": "No path found between 'notebook' and 'cell'.\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": null,
+      "source": "notebook",
+      "target": "cell"
+    }
+  ],
+  "explains": [
+    {
+      "elapsed_ms": 1386.8,
+      "output_lines": 29,
+      "stdout_preview": "Node: localize()\n  ID:        vs_nls_localize\n  Source:    src/vs/nls.ts L85\n  Type:      code\n  Community: 1\n  Degree:    2612\n\nConnections (2612):\n  --> nls.ts [contains] [EXTRACTED]\n  --> .import() [calls] [INFERRED]\n  --> .renderChatContentPart() [calls] [INFERRED]\n  --> fromNow() [calls] [INFERRED]\n  --> .getActionBarActions() [calls] [INFERRED]\n  --> .describe() [calls] [INFERRED]\n  --> .onConfigUpdate() [calls] [INFERRED]\n  --> .invoke() [calls] [INFERRED]\n  --> .writeFile() [calls] [INFE",
+      "stderr": "",
+      "rc": 0,
+      "hops": null,
+      "target": "localize()"
+    },
+    {
+      "elapsed_ms": 1470.8,
+      "output_lines": 1,
+      "stdout_preview": "No node matching 'IInstantiationService' found.\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": null,
+      "target": "IInstantiationService"
+    },
+    {
+      "elapsed_ms": 1340.1,
+      "output_lines": 9,
+      "stdout_preview": "Node: uri.ts\n  ID:        extensions_terminal_suggest_src_helpers_uri_ts\n  Source:    extensions/terminal-suggest/src/helpers/uri.ts L1\n  Type:      code\n  Community: 2747\n  Degree:    1\n\nConnections (1):\n  --> getFriendlyResourcePath() [contains] [EXTRACTED]\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": null,
+      "target": "uri.ts"
+    },
+    {
+      "elapsed_ms": 1442.3,
+      "output_lines": 10,
+      "stdout_preview": "Node: event.ts\n  ID:        extensions_copilot_src_extension_completions_core_vscode_node_lib_src_util_event_ts\n  Source:    extensions/copilot/src/extension/completions-core/vscode-node/lib/src/util/event.ts L1\n  Type:      code\n  Community: 1496\n  Degree:    2\n\nConnections (2):\n  --> Emitter [contains] [EXTRACTED]\n  --> transformEvent() [contains] [EXTRACTED]\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": null,
+      "target": "event.ts"
+    },
+    {
+      "elapsed_ms": 1364.3,
+      "output_lines": 12,
+      "stdout_preview": "Node: CommandCenterControl\n  ID:        edit_refactor_loop_index_commandcentercontrol\n  Source:    extensions/copilot/test/simulation/fixtures/edit-refactor-loop/index.ts L23\n  Type:      code\n  Community: 1\n  Degree:    4\n\nConnections (4):\n  --> index.ts [contains] [EXTRACTED]\n  --> .constructor() [method] [EXTRACTED]\n  --> ._setVisibility() [method] [EXTRACTED]\n  --> .dispose() [method] [EXTRACTED]\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": null,
+      "target": "CommandCenter"
+    },
+    {
+      "elapsed_ms": 1399.1,
+      "output_lines": 9,
+      "stdout_preview": "Node: sessionRequestLifecycle.ts\n  ID:        extensions_copilot_src_extension_chatsessions_vscode_node_sessionrequestlifecycle_ts\n  Source:    extensions/copilot/src/extension/chatSessions/vscode-node/sessionRequestLifecycle.ts L1\n  Type:      code\n  Community: 39\n  Degree:    1\n\nConnections (1):\n  --> SessionRequestLifecycle [contains] [EXTRACTED]\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": null,
+      "target": "lifecycle.ts"
+    },
+    {
+      "elapsed_ms": 1393.9,
+      "output_lines": 10,
+      "stdout_preview": "Node: extensions.ts\n  ID:        test_mcp_src_automationtools_extensions_ts\n  Source:    test/mcp/src/automationTools/extensions.ts L1\n  Type:      code\n  Community: 152\n  Degree:    2\n\nConnections (2):\n  --> index.ts [imports_from] [EXTRACTED]\n  --> applyExtensionsTools() [contains] [EXTRACTED]\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": null,
+      "target": "extensions.ts"
+    },
+    {
+      "elapsed_ms": 1354.2,
+      "output_lines": 9,
+      "stdout_preview": "Node: workbench.ts\n  ID:        test_automation_src_workbench_ts\n  Source:    test/automation/src/workbench.ts L1\n  Type:      code\n  Community: 2263\n  Degree:    1\n\nConnections (1):\n  --> Workbench [contains] [EXTRACTED]\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": null,
+      "target": "workbench.ts"
+    },
+    {
+      "elapsed_ms": 1517.0,
+      "output_lines": 9,
+      "stdout_preview": "Node: .textModel()\n  ID:        codemapper_notebookeditorwidget_notebookeditorwidget_textmodel\n  Source:    extensions/copilot/test/simulation/fixtures/codeMapper/notebookEditorWidget.ts L251\n  Type:      code\n  Community: 68\n  Degree:    1\n\nConnections (1):\n  --> NotebookEditorWidget [method] [EXTRACTED]\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": null,
+      "target": "textModel"
+    },
+    {
+      "elapsed_ms": 1314.8,
+      "output_lines": 1,
+      "stdout_preview": "No node matching 'ILanguageService' found.\n",
+      "stderr": "",
+      "rc": 0,
+      "hops": null,
+      "target": "ILanguageService"
+    }
+  ],
+  "processes": [
+    {
+      "name": "list",
+      "elapsed_ms": 1329.9,
+      "output_lines": 0,
+      "stdout_preview": "",
+      "stderr": "",
+      "rc": 0,
+      "hops": null
+    }
+  ]
+}

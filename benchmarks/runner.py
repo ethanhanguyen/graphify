@@ -108,7 +108,7 @@ def measure_coverage() -> dict:
 def measure_graph_stats(graph_path: Path) -> dict:
     data = json.loads(graph_path.read_text())
     nodes = data.get("nodes", [])
-    edges = data.get("edges", [])
+    edges = data.get("links", [])
     file_size = graph_path.stat().st_size / (1024 * 1024)
     return {
         "nodes": len(nodes),

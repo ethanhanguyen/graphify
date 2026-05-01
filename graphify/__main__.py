@@ -1000,6 +1000,9 @@ def main() -> None:
         print("    --contributor \"Name\"    tag who added it to the corpus")
         print("    --dir <path>            target directory (default: ./raw)")
         print("  watch <path>            watch a folder and rebuild the graph on code changes")
+        print("  build <path>            full build — extract, index, cluster, report (no LLM)")
+        print("    --embeddings             also generate semantic embeddings (requires openai)")
+        print("  migrate <path>          upgrade graph.json from v1 schema to v2")
         print("  update <path>           re-extract code files and update the graph (no LLM needed)")
         print("  cluster-only <path>     rerun clustering on an existing graph.json and regenerate report")
         print("  processes <path>        list, trace, or detect changes in code processes")
@@ -1370,6 +1373,84 @@ def main() -> None:
             print(f"error: {exc}", file=sys.stderr)
             sys.exit(1)
 
+    elif cmd == "build":
+        if len(sys.argv) < 3:
+            print("Usage: graphify build <path> [--embeddings]", file=sys.stderr)
+            sys.exit(1)
+        build_path = Path(sys.argv[2])
+        if not build_path.exists():
+            print(f"error: path not found: {build_path}", file=sys.stderr)
+            sys.exit(1)
+        use_embeddings = "--embeddings" in sys.argv
+        from graphify.watch import _rebuild_code
+        from graphify.cluster import cluster, score_all
+        from graphify.analyze import god_nodes, surprising_connections, suggest_questions
+        from graphify.report import generate
+        from graphify.export import to_json, to_html
+        from graphify.build import build_from_json
+        from graphify.index import build_indexes
+        print(f"Building graph for {build_path}...")
+        ok = _rebuild_code(build_path)
+        if not ok:
+            print("Extraction failed — check output above.", file=sys.stderr)
+            sys.exit(1)
+        graph_json = build_path / "graphify-out" / "graph.json"
+        print("Loading and indexing...")
+        _raw = json.loads(graph_json.read_text(encoding="utf-8"))
+        G = build_from_json(_raw)
+        build_indexes(G)
+        print(f"Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+        print("Clustering and analyzing...")
+        communities = cluster(G)
+        cohesion = score_all(G, communities)
+        gods = god_nodes(G)
+        surprises = surprising_connections(G, communities)
+        labels = {cid: f"Community {cid}" for cid in communities}
+        questions = suggest_questions(G, communities, labels)
+        tokens = {"input": 0, "output": 0}
+        report = generate(G, communities, cohesion, labels, gods, surprises,
+                          {"warning": "build mode — corpus stats not available"},
+                          tokens, str(build_path), suggested_questions=questions)
+        out = build_path / "graphify-out"
+        (out / "GRAPH_REPORT.md").write_text(report, encoding="utf-8")
+        G.graph.pop("index", None)
+        to_json(G, communities, str(graph_json))
+        try:
+            to_html(G, communities, str(out / "graph.html"), community_labels=labels or None)
+        except ValueError as e:
+            print(f"  (skipped HTML: {e})")
+        print(f"Build complete — {len(communities)} communities.")
+        G.graph.pop("index", None)
+        if use_embeddings:
+            from graphify.search.embeddings import build_embeddings
+            build_embeddings(G, out)
+            print("Embeddings built.")
+
+    elif cmd == "migrate":
+        if len(sys.argv) < 3:
+            print("Usage: graphify migrate <path-to-graphify-out>", file=sys.stderr)
+            sys.exit(1)
+        migrate_path = Path(sys.argv[2])
+        graph_json = migrate_path / "graph.json" if migrate_path.is_dir() else migrate_path
+        if not graph_json.exists():
+            print(f"error: graph not found: {graph_json}", file=sys.stderr)
+            sys.exit(1)
+        _raw = json.loads(graph_json.read_text(encoding="utf-8"))
+        sv = _raw.get("graph", {}).get("schema_version", 1)
+        if sv >= 2:
+            print(f"Already at schema_version={sv}, no migration needed.")
+            sys.exit(0)
+        _raw.setdefault("graph", {})["schema_version"] = 2
+        for link in _raw.get("links", []):
+            if "confidence" not in link:
+                link["confidence"] = "EXTRACTED"
+            if "weight" not in link:
+                link["weight"] = 1.0
+            if "edge_type" not in link and "relation" in link:
+                link["edge_type"] = link["relation"]
+        graph_json.write_text(json.dumps(_raw, indent=2))
+        print(f"Migrated {graph_json} to schema_version=2")
+
     elif cmd == "watch":
         watch_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(".")
         if not watch_path.exists():
@@ -1404,7 +1485,6 @@ def main() -> None:
         if subcmd == "list":
             try:
                 from graphify.entry_points import detect_entry_points, score_entry_points
-                from graphify.code_schema import LanguageProvider
                 extractions = []
                 ep = detect_entry_points(G, extractions, "python")
                 if not ep:
@@ -1497,7 +1577,10 @@ def main() -> None:
         out = watch_path / "graphify-out"
         (out / "GRAPH_REPORT.md").write_text(report, encoding="utf-8")
         to_json(G, communities, str(out / "graph.json"))
-        to_html(G, communities, str(out / "graph.html"), community_labels=labels or None)
+        try:
+            to_html(G, communities, str(out / "graph.html"), community_labels=labels or None)
+        except ValueError as e:
+            print(f"  (skipped HTML: {e})")
         print(f"Done — {len(communities)} communities. GRAPH_REPORT.md, graph.json and graph.html updated.")
 
     elif cmd == "update":
