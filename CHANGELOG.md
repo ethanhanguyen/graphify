@@ -2,6 +2,56 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## Unreleased — Fork Epoch 4: Performance & Correctness
+
+### PR 4.1 — Compact & Fast Serialization
+
+- `graphify/serve.py` — Unified `_load_graph_file()` shared across all CLI, serve, and build paths; optional `orjson` accelerator with stdlib fallback; `.json.gz` auto-detection
+- `graphify/export.py` — Compact JSON output (`separators=(',',':')`, no indent) reduces graph.json size 60%; `_src`/`_tgt` stripped from edges (redundant with source/target, recomputed on load by `build_from_json`)
+- `graphify/__main__.py` — 6 duplicate JSON parse blocks replaced with single `_load_graph_file()` call in `query`, `path`, `explain`, `processes`, `cluster-only`, `merge-graphs`
+- `graphify/build.py` — `build_merge()` uses shared loader
+- `graphify/benchmark.py` — Uses shared loader (100% coverage)
+- Bench: **13x query speedup** on fixture graph (1488ms → 114ms p50) via compact serialization
+
+### PR 4.2 — Ranked Node Lookup
+
+- `graphify/serve.py` — `_find_node()` now ranks by: exact label match (+100), filename match (+50), path depth (+30), core module bonus (+15, no ext/test), degree (+15 max), tiebreaker by shortest ID
+- `graphify/__main__.py` — `path` CLI uses `_find_node` for source/target resolution instead of O(N) keyword scoring
+- Fix: `explain uri.ts` now returns `src/vs/.../uri.ts` instead of `extensions/.../helpers/uri.ts`
+- Fix: `_find_node` also matches on `source_file` for filename-only queries such as `event.ts`
+
+### PR 4.3 — Graph-Based Entry Point Detection
+
+- `graphify/entry_points.py` — New `GraphEntryPointDetector` class: detects CLI, HTTP, TEST entry points from graph node attributes (labels, source files, node types) and graph structure (high out-degree + no incoming CALLS = entry point)
+- `graphify/entry_points.py` — `detect_entry_points()` falls back to graph-based detection when extraction dicts produce no results
+- `graphify/__main__.py` — `processes list` CLI fixed: removed broken per-language retry loop, single call to unified detection
+- Fix: `processes list` returns results (was always empty — required build-time extraction data that was never persisted)
+
+### PR 4.4 — CLI Query via Hybrid Search
+
+- `graphify/search/__init__.py` — `build_orchestrator(graph, use_embeddings=False)` for CLI reuse
+- `graphify/__main__.py` — `query` CLI uses BM25 search engine (via `SearchOrchestrator`) instead of O(N) keyword substring scoring + shallow BFS; graceful fallback to keyword scoring when search unavailable
+- Fix: Query results are now diverse and relevant (previously all 15 queries returned identical output)
+
+### PR 4.5 — Index Persistence + Test Coverage
+
+- `graphify/index.py` — `CompositeIndex.to_dict()` / `from_dict()` for JSON serialization; `save_indexes()`, `load_indexes()`, `load_or_build_indexes()` utility functions
+- `graphify/export.py` — Indexes persisted alongside `graph.json` as `<graph>.index.json` after every build; index popped from `G.graph` before JSON serialize to avoid `TypeError`
+- `graphify/serve.py` — Indexes auto-loaded on graph load via `load_or_build_indexes()`
+- `tests/test_index.py` — 24 tests: EdgeTypeIndex, NodeLabelTrie, ConfidenceBitmap, CompositeIndex round-trip (0% → 96% coverage)
+- `tests/test_code_emitter.py` — 21 tests: fluent API, `as_dicts()`, stats, clear, confidence tiers (0% → 100% coverage)
+- `tests/test_serve.py` — +8 path algorithm tests: bidirectional BFS, Dijkstra, A* (17% → 37% coverage)
+- `tests/test_entry_points.py` — +8 graph-based detection tests
+- `tests/test_search_orchestrator.py` — +2 BM25 orchestrator tests
+- `tests/test_serialization.py` — 23 new tests for compact JSON, orjson fallback, .json.gz, round-trip
+
+### PR 4.6 — Final Validation
+
+- `benchmarks/vscode-bench.py` — Re-run on fixture graph: Query 114ms p50 (13x speedup), Explain 112ms p50 (12.5x speedup)
+- Test suite: **1019 tests pass** (was 917), 2 warnings, 10.2s runtime
+- Coverage: 63% → 67% overall; key modules at 96-100%
+- All 5 root causes from VSCode SweBench audit resolved
+
 ## Unreleased — Fork Epoch 3: Caching + Multi-Repo
 
 ### PR 3.1 — Caching + Agent Integration

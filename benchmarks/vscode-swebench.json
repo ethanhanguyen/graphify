@@ -1,6 +1,6 @@
 {
   "benchmark": "vscode-swebench",
-  "timestamp": "2026-05-01T01:19:17",
+  "timestamp": "2026-05-01T07:07:53",
   "graph": {
     "file_size_mb": 0.1,
     "nodes": 231,
@@ -8,9 +8,9 @@
     "schema_version": 2
   },
   "summary": {
-    "query_p50": 113.4,
-    "query_p95": 225.2,
-    "query_avg": 122.7,
+    "query_p50": 113.8,
+    "query_p95": 322.7,
+    "query_avg": 128.0,
     "query_errors": 0,
     "query_total": 15,
     "path_p50": null,
@@ -19,9 +19,9 @@
     "path_errors": 8,
     "path_total": 8,
     "path_hops_p50": null,
-    "explain_p50": 110.8,
-    "explain_p95": 119.5,
-    "explain_avg": 111.7,
+    "explain_p50": 111.5,
+    "explain_p95": 113.6,
+    "explain_avg": 111.5,
     "explain_errors": 0,
     "explain_total": 10
   },
@@ -29,7 +29,7 @@
     {
       "category": "architecture",
       "question": "how does lifecycle.ts work",
-      "elapsed_ms": 225.2,
+      "elapsed_ms": 322.7,
       "output_lines": 1,
       "stdout_preview": "No matching nodes found.\n",
       "stderr": "",
@@ -39,7 +39,7 @@
     {
       "category": "architecture",
       "question": "what is the purpose of localize()",
-      "elapsed_ms": 122.0,
+      "elapsed_ms": 121.2,
       "output_lines": 3,
       "stdout_preview": "NODE Entry point and configuration for the processing pipeline. [src=python/pipeline.py loc=L1 community=1]\nNODE Processes raw data through a pipeline of transformations. [src=python/processor.py loc=L8 community=1]\nNODE Filters used by the data processor. [src=python/filters.py loc=L1 community=1]\n",
       "stderr": "",
@@ -49,7 +49,7 @@
     {
       "category": "architecture",
       "question": "explain how uri.ts is used",
-      "elapsed_ms": 112.0,
+      "elapsed_ms": 112.6,
       "output_lines": 1,
       "stdout_preview": "NODE Filters used by the data processor. [src=python/filters.py loc=L1 community=1]\n",
       "stderr": "",
@@ -59,7 +59,7 @@
     {
       "category": "architecture",
       "question": "what role does event.ts play",
-      "elapsed_ms": 115.9,
+      "elapsed_ms": 111.9,
       "output_lines": 1,
       "stdout_preview": "No matching nodes found.\n",
       "stderr": "",
@@ -69,7 +69,7 @@
     {
       "category": "dependency",
       "question": "how does instantiation.ts work",
-      "elapsed_ms": 124.5,
+      "elapsed_ms": 117.4,
       "output_lines": 1,
       "stdout_preview": "No matching nodes found.\n",
       "stderr": "",
@@ -79,7 +79,7 @@
     {
       "category": "dependency",
       "question": "show dependencies of extensions.ts",
-      "elapsed_ms": 116.1,
+      "elapsed_ms": 115.3,
       "output_lines": 1,
       "stdout_preview": "NODE Processes raw data through a pipeline of transformations. [src=python/processor.py loc=L8 community=1]\n",
       "stderr": "",
@@ -89,7 +89,7 @@
     {
       "category": "callgraph",
       "question": "what calls ICommandService",
-      "elapsed_ms": 110.5,
+      "elapsed_ms": 114.8,
       "output_lines": 1,
       "stdout_preview": "No matching nodes found.\n",
       "stderr": "",
@@ -99,7 +99,7 @@
     {
       "category": "callgraph",
       "question": "how does workbench contribute to editor services",
-      "elapsed_ms": 110.6,
+      "elapsed_ms": 111.9,
       "output_lines": 1,
       "stdout_preview": "No matching nodes found.\n",
       "stderr": "",
@@ -109,9 +109,9 @@
     {
       "category": "startup",
       "question": "trace the startup process from main.ts",
-      "elapsed_ms": 109.9,
+      "elapsed_ms": 113.6,
       "output_lines": 10,
-      "stdout_preview": "NODE process() [src=sample.c loc=L11 community=2]\nNODE .Process() [src=sample.cs loc=L21 community=0]\nNODE .process() [src=sample_calls.py loc=L18 community=9]\nNODE .process() [src=sample.java loc=L31 community=0]\nNODE .process() [src=python/processor.py loc=L17 community=1]\nNODE .process() [src=python/processor.py loc=L29 community=1]\nNODE .Process() [src=sample.cs loc=L9 community=0]\nNODE .process() [src=typescript/processor.ts loc=L36 community=3]\nNODE .process() [src=typescript/processor.ts ",
+      "stdout_preview": "NODE process() [src=sample.c loc=L11 community=2]\nNODE .process() [src=sample_calls.py loc=L18 community=9]\nNODE .Process() [src=sample.cs loc=L21 community=0]\nNODE .process() [src=sample.java loc=L31 community=0]\nNODE .Process() [src=go/processor.go loc=L33 community=6]\nNODE .process() [src=typescript/processor.ts loc=L21 community=3]\nNODE .Process() [src=sample.cs loc=L9 community=0]\nNODE .process() [src=typescript/processor.ts loc=L36 community=3]\nNODE .process() [src=python/processor.py loc=",
       "stderr": "",
       "rc": 0,
       "hops": null
@@ -119,7 +119,7 @@
     {
       "category": "cross-module",
       "question": "what is the relationship between textModel and editor",
-      "elapsed_ms": 122.1,
+      "elapsed_ms": 114.3,
       "output_lines": 3,
       "stdout_preview": "NODE Entry point and configuration for the processing pipeline. [src=python/pipeline.py loc=L1 community=1]\nNODE Filters used by the data processor. [src=python/filters.py loc=L1 community=1]\nNODE Fixture: functions and methods that call each other - for call-graph extraction [src=sample_calls.py loc=L1 community=9]\n",
       "stderr": "",
@@ -129,7 +129,7 @@
     {
       "category": "cross-module",
       "question": "how does notebook support interact with the editor",
-      "elapsed_ms": 123.2,
+      "elapsed_ms": 111.2,
       "output_lines": 3,
       "stdout_preview": "NODE Entry point and configuration for the processing pipeline. [src=python/pipeline.py loc=L1 community=1]\nNODE A simple data processor module with cross-file imports. Exercises: class extract [src=python/processor.py loc=L1 community=1]\nNODE Filters used by the data processor. [src=python/filters.py loc=L1 community=1]\n",
       "stderr": "",
@@ -139,7 +139,7 @@
     {
       "category": "cross-module",
       "question": "what connects terminal to the renderer",
-      "elapsed_ms": 113.4,
+      "elapsed_ms": 115.0,
       "output_lines": 2,
       "stdout_preview": "NODE Entry point and configuration for the processing pipeline. [src=python/pipeline.py loc=L1 community=1]\nNODE Filters used by the data processor. [src=python/filters.py loc=L1 community=1]\n",
       "stderr": "",
@@ -149,7 +149,7 @@
     {
       "category": "search",
       "question": "how are keybindings resolved",
-      "elapsed_ms": 112.4,
+      "elapsed_ms": 113.2,
       "output_lines": 1,
       "stdout_preview": "No matching nodes found.\n",
       "stderr": "",
@@ -159,7 +159,7 @@
     {
       "category": "search",
       "question": "what is the file system provider API",
-      "elapsed_ms": 112.6,
+      "elapsed_ms": 111.6,
       "output_lines": 2,
       "stdout_preview": "NODE Entry point and configuration for the processing pipeline. [src=python/pipeline.py loc=L1 community=1]\nNODE Filters used by the data processor. [src=python/filters.py loc=L1 community=1]\n",
       "stderr": "",
@@ -169,7 +169,7 @@
     {
       "category": "statusbar",
       "question": "how is the status bar implemented",
-      "elapsed_ms": 109.9,
+      "elapsed_ms": 113.8,
       "output_lines": 2,
       "stdout_preview": "NODE Entry point and configuration for the processing pipeline. [src=python/pipeline.py loc=L1 community=1]\nNODE Filters used by the data processor. [src=python/filters.py loc=L1 community=1]\n",
       "stderr": "",
@@ -179,7 +179,7 @@
   ],
   "paths": [
     {
-      "elapsed_ms": 111.6,
+      "elapsed_ms": 115.2,
       "output_lines": 0,
       "stdout_preview": "",
       "stderr": "No node matching 'lifecycle.ts' found.\n",
@@ -189,7 +189,7 @@
       "target": "localize()"
     },
     {
-      "elapsed_ms": 108.8,
+      "elapsed_ms": 112.6,
       "output_lines": 0,
       "stdout_preview": "",
       "stderr": "No node matching 'uri.ts' found.\n",
@@ -199,7 +199,7 @@
       "target": "event.ts"
     },
     {
-      "elapsed_ms": 109.4,
+      "elapsed_ms": 111.6,
       "output_lines": 0,
       "stdout_preview": "",
       "stderr": "No node matching 'instantiation.ts' found.\n",
@@ -209,7 +209,7 @@
       "target": "IInstantiationService"
     },
     {
-      "elapsed_ms": 112.4,
+      "elapsed_ms": 111.9,
       "output_lines": 0,
       "stdout_preview": "",
       "stderr": "No node matching 'workbench.ts' found.\n",
@@ -219,7 +219,7 @@
       "target": "editorWorkerService"
     },
     {
-      "elapsed_ms": 108.8,
+      "elapsed_ms": 116.7,
       "output_lines": 0,
       "stdout_preview": "",
       "stderr": "No node matching 'main.ts' found.\n",
@@ -229,7 +229,7 @@
       "target": "createEditor"
     },
     {
-      "elapsed_ms": 109.8,
+      "elapsed_ms": 117.5,
       "output_lines": 0,
       "stdout_preview": "",
       "stderr": "No node matching 'commandService' found.\n",
@@ -239,7 +239,7 @@
       "target": "keybindingService"
     },
     {
-      "elapsed_ms": 111.6,
+      "elapsed_ms": 111.8,
       "output_lines": 0,
       "stdout_preview": "",
       "stderr": "No node matching 'textModel' found.\n",
@@ -249,7 +249,7 @@
       "target": "editor"
     },
     {
-      "elapsed_ms": 112.9,
+      "elapsed_ms": 115.2,
       "output_lines": 0,
       "stdout_preview": "",
       "stderr": "No node matching 'notebook' found.\n",
@@ -261,7 +261,7 @@
   ],
   "explains": [
     {
-      "elapsed_ms": 113.5,
+      "elapsed_ms": 109.5,
       "output_lines": 1,
       "stdout_preview": "No node matching 'localize()' found.\n",
       "stderr": "",
@@ -270,7 +270,7 @@
       "target": "localize()"
     },
     {
-      "elapsed_ms": 109.9,
+      "elapsed_ms": 113.6,
       "output_lines": 1,
       "stdout_preview": "No node matching 'IInstantiationService' found.\n",
       "stderr": "",
@@ -279,7 +279,7 @@
       "target": "IInstantiationService"
     },
     {
-      "elapsed_ms": 110.6,
+      "elapsed_ms": 111.3,
       "output_lines": 1,
       "stdout_preview": "No node matching 'uri.ts' found.\n",
       "stderr": "",
@@ -288,7 +288,7 @@
       "target": "uri.ts"
     },
     {
-      "elapsed_ms": 109.5,
+      "elapsed_ms": 110.7,
       "output_lines": 1,
       "stdout_preview": "No node matching 'event.ts' found.\n",
       "stderr": "",
@@ -297,7 +297,7 @@
       "target": "event.ts"
     },
     {
-      "elapsed_ms": 110.4,
+      "elapsed_ms": 111.2,
       "output_lines": 1,
       "stdout_preview": "No node matching 'CommandCenter' found.\n",
       "stderr": "",
@@ -306,7 +306,7 @@
       "target": "CommandCenter"
     },
     {
-      "elapsed_ms": 108.8,
+      "elapsed_ms": 112.4,
       "output_lines": 1,
       "stdout_preview": "No node matching 'lifecycle.ts' found.\n",
       "stderr": "",
@@ -315,7 +315,7 @@
       "target": "lifecycle.ts"
     },
     {
-      "elapsed_ms": 119.5,
+      "elapsed_ms": 110.8,
       "output_lines": 1,
       "stdout_preview": "No node matching 'extensions.ts' found.\n",
       "stderr": "",
@@ -324,7 +324,7 @@
       "target": "extensions.ts"
     },
     {
-      "elapsed_ms": 111.9,
+      "elapsed_ms": 112.4,
       "output_lines": 1,
       "stdout_preview": "No node matching 'workbench.ts' found.\n",
       "stderr": "",
@@ -333,7 +333,7 @@
       "target": "workbench.ts"
     },
     {
-      "elapsed_ms": 111.1,
+      "elapsed_ms": 111.8,
       "output_lines": 1,
       "stdout_preview": "No node matching 'textModel' found.\n",
       "stderr": "",
@@ -342,7 +342,7 @@
       "target": "textModel"
     },
     {
-      "elapsed_ms": 111.4,
+      "elapsed_ms": 111.7,
       "output_lines": 1,
       "stdout_preview": "No node matching 'ILanguageService' found.\n",
       "stderr": "",
@@ -354,7 +354,7 @@
   "processes": [
     {
       "name": "list",
-      "elapsed_ms": 112.4,
+      "elapsed_ms": 114.1,
       "output_lines": 3,
       "stdout_preview": "  CLI      1.00  main()  (sample.zig:34)\n  CLI      0.55  Server  (sample.go:8)\n  CLI      0.52  NewServer()  (sample.go:12)\n",
       "stderr": "",
