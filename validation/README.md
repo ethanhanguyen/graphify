@@ -16,10 +16,12 @@ Targets are data-driven: common node labels are extracted from both graphs, rank
 
 Running on `microsoft/vscode` (9,936 files, ~11.5M words) — a production codebase:
 
+> **Note on query engine:** Upstream PyPI `graphifyy==0.5.7` lacks the `graphify.search` module (BM25 orchestrator). It falls back to keyword substring match + BFS. The fork uses BM25 search on labels/paths/docstrings. Both engines run against their own graph; the graph structure differences (below) are the primary driver of quality improvement, not the engine.
+
 | Metric | Baseline | Current | Improvement |
 |--------|----------|---------|-------------|
 | Graph size | 164 MB | 106 MB | **35% smaller** |
-| Communities detected | 2,726 | 3,994 | **47% more granular** |
+| Communities detected | 2,419 | 3,716 | **54% more granular** |
 | Noise edges (`localize()` fan-out) | 2,628 edges | 4 edges | **pruned** |
 | Cross-file calls resolved | 0 | 70,788 | **new capability** |
 | Query target hit rate | ~10% | ~80% | **8× improvement** |

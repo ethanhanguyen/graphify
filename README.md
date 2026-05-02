@@ -179,19 +179,48 @@ Full apple-to-apple validation against upstream PyPI `graphifyy==0.5.7` on Micro
 | Metric | Upstream (0.5.7) | Fork (0.5.6 + epochs) | Delta |
 |--------|-----------------|----------------------|-------|
 | Nodes | 111,799 | 111,799 | 0% |
-| Edges | 249,966 | 249,966 | 0% |
-| **Graph size** | 164 MB | **105 MB** | **-36%** |
-| Bytes per node | 1,539 | 987 | -36% |
-| **Query BFS p50** | 46.2ms | **42.1ms** | **-9%** |
-| Path p50 | 54.9ms | 56.5ms | +3% |
-| Explain p50 | 27.1ms | 27.9ms | +3% |
-| Communities | 2,627 | 2,719 | +3.5% |
-| Build time | 89s | 79s | -11% |
+| Edges | 249,966 | 244,106 | -2% |
+| **Graph size** | 164 MB | **106 MB** | **-35%** |
+| Bytes per node | 1,539 | 998 | -35% |
+| **Query BFS p50** | 43.9ms | **43.7ms** | **-0.5%** |
+| Path p50 | 55.9ms | 56.2ms | +0.5% |
+| Explain p50 | 27.3ms | 28.1ms | +2.9% |
+| Communities | 2,419 | 3,716 | +54% |
+| Build time | 86s | 95s | +10.5% |
 | CLI errors | 0 | 0 | — |
-| **Explain Jaccard** | — | **1.00** | All neighbors identical |
-| **Query Jaccard** | — | **0.10** | BM25 ≠ keyword BFS |
+| **Target hit rate** | 20% | **100%** | **+400%** |
+| **Explain Jaccard** | — | **0.11** | Edges restructured |
+| **Query Jaccard** | — | **0.03** | BM25 ≠ keyword BFS |
 
-Graph topology is identical (same tree-sitter extraction pipeline). Key difference: **36% smaller files**, **9% faster queries**, and **BM25 search replaces naive keyword scoring** for more relevant query results.
+### Query engine difference
+
+Upstream PyPI `graphifyy==0.5.7` does not ship the `graphify.search` module (BM25 orchestrator added in our fork). It falls back to `_score_nodes` (keyword substring match) + BFS with depth=2. The fork uses BM25 search on node labels, file paths, and docstrings, fused with semantic embeddings when available. Both engines run against their own graph.
+
+### Query quality: before vs after
+
+The upstream graph connects utility functions (`localize()`, `toDisposable()`, `autorun`) to *every file that imports them* — creating massive noise edges (e.g. `localize()` = 2,628 edges). The fork replaces import-fan-out with cross-file call resolution (`call_dag`), connecting nodes only through real call relationships (`localize()` → 4 edges).
+
+**Q: "how does lifecycle.ts work?"**
+- Upstream: 51 results — chat renderer methods, Playwright driver, `localize()` noise. **Zero results about lifecycle.ts.**
+- Fork: 10 results — all `lifecycle.ts` variants across modules + its true dependents.
+
+**Q: "what role does event.ts play?"**
+- Upstream: 60 results — random browser infrastructure, `localize()`, Playwright code. **Zero results about event.ts.**
+- Fork: 10 results — all `event.ts` variants + file-level connections.
+
+The 100% target hit rate means every fork query returns the node it was asked about. Upstream: 20% (only 2/10 queries returned their target — the `uri.ts` file node that happens to be directly imported by everything).
+
+### Explain quality
+
+| Node | Upstream degree | Fork degree | Meaning |
+|------|----------------|-------------|---------|
+| `localize()` | 2,628 | 4 | Noise eliminated — only real callers remain |
+| `lifecycle.ts` | 1 | 2,674 | Real connections discovered |
+| `uri.ts` | 1 | 1,998 | Real connections discovered |
+| `event.ts` | 2 | 1,725 | Real connections discovered |
+| `test-checker.ts` | 1,582 | 1,582 | Identical — preserved correctly |
+
+Upstream nodes like `lifecycle.ts` had degree=1 (a file node pointing to itself). The fork's call resolution discovers thousands of genuine cross-file relationships that upstream missed entirely.
 
 ## Validation framework
 
