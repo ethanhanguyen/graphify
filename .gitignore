@@ -33,3 +33,4 @@ scripts/benchmark_kimi*.py
 .tmp/
 .coverage
 coverage.json
+.DS_Store
