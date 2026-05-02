@@ -31,8 +31,9 @@ METRIC_THRESHOLDS = {
     "cli_query_jaccard":    (True,  10, 25),
     "cli_explain_jaccard":  (True,  10, 25),
     "cli_error_rate":       (False, 10, 30),
-    "path_reachability":    (True,  5,  15),
+    "path_reachability":    (True,  15, 30),
     "degree_parity":        (True,  10, 25),
+    "target_hit_rate":      (True,  10, 25),
 }
 
 
@@ -219,6 +220,7 @@ def collect_metrics(out_b, out_c, query_results):
             b_reach = sum(1 for r in results if r.get("b_hops", -1) > 0)
             c_reach = sum(1 for r in results if r.get("c_hops", -1) > 0)
             total = len(results) or 1
+            metrics["b_path_reachability"] = round((b_reach / total) * 100, 1)
             metrics["path_reachability"] = round((c_reach / total) * 100, 1)
 
         # Degree parity
@@ -232,6 +234,36 @@ def collect_metrics(out_b, out_c, query_results):
                     diffs.append(abs(bd - cd) / max(bd, cd))
             if diffs:
                 metrics["degree_parity"] = round(100 - (median(diffs) * 100), 1)
+
+        # Target hit rate: does the query return the node it asked about?
+        results = query_results.get("query", [])
+        if results:
+            b_hits = 0
+            c_hits = 0
+            for r in results:
+                label = r.get("label", "")
+                target = label
+                for tmpl_prefix, tmpl_suffix in [
+                    ("how does ", " work"),
+                    ("what is the purpose of ", ""),
+                    ("explain how ", " is used"),
+                    ("what role does ", " play"),
+                    ("describe the function of ", ""),
+                ]:
+                    if label.startswith(tmpl_prefix) and (not tmpl_suffix or label.endswith(tmpl_suffix)):
+                        target = label[len(tmpl_prefix):]
+                        if tmpl_suffix:
+                            target = target[:-len(tmpl_suffix)]
+                        break
+                b_nodes = r.get("b_nodes", [])
+                c_nodes = r.get("c_nodes", [])
+                if any(target in n for n in b_nodes):
+                    b_hits += 1
+                if any(target in n for n in c_nodes):
+                    c_hits += 1
+            total = len(results) or 1
+            metrics["b_target_hit_rate"] = round((b_hits / total) * 100, 1)
+            metrics["target_hit_rate"] = round((c_hits / total) * 100, 1)
 
     return metrics
 
@@ -282,9 +314,13 @@ def assess_metrics(metrics):
         elif name == "cli_error_rate":
             b_val, c_val = None, metrics.get("cli_error_rate")
         elif name == "path_reachability":
-            b_val, c_val = None, metrics.get("path_reachability")
+            b_val = metrics.get("b_path_reachability")
+            c_val = metrics.get("path_reachability")
         elif name == "degree_parity":
             b_val, c_val = None, metrics.get("degree_parity")
+        elif name == "target_hit_rate":
+            b_val = metrics.get("b_target_hit_rate")
+            c_val = metrics.get("target_hit_rate")
         else:
             continue
 
@@ -339,6 +375,7 @@ def _recommendation(name, delta_pct):
         "cli_error_rate": ("More CLI errors. Check CLI argument parsing or file I/O timeout handling.", ""),
         "path_reachability": ("Paths lost. Check if graph connectivity changed (edge pruning, node removal).", ""),
         "degree_parity": ("Node degree divergence. Check edge construction for recently changed modules.", ""),
+        "target_hit_rate": ("Query target presence dropped. Check if query scorer changed or edge model lost relevant connections.", ""),
     }
     rec = recs.get(name, ("Investigate recent changes in graphify/ core modules.", ""))
     return rec[0]

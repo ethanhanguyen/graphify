@@ -132,8 +132,6 @@ class CallResolutionDAG:
         label_index: dict[str, dict[str, str]] = {}
         inverted_label_index: dict[str, list[tuple[str, str]]] = {}
         for fp, result in file_to_extraction.items():
-            # Use absolute path keys so same-file (L171) and import
-            # resolution (L193) lookups actually match caller_file values.
             for node in result.get("nodes", []):
                 label_index.setdefault(fp, {})
                 label = node.get("label", "").strip("()").lstrip(".").lower()
@@ -141,9 +139,13 @@ class CallResolutionDAG:
                     label_index[fp][label] = node["id"]
                     inverted_label_index.setdefault(label, []).append((fp, node["id"]))
 
+        # Pre-cache caller_file label lookups to avoid repeated dict access
         for cs in self.call_sites:
             callee = cs.callee_name.lower()
-            resolved_nid = self._resolve_callee_nid(cs, callee, label_index, import_map, inverted_label_index)
+            caller_labels = label_index.get(cs.caller_file, {})
+            resolved_nid = self._resolve_callee_nid(
+                cs, callee, caller_labels, label_index, import_map, inverted_label_index,
+            )
             if resolved_nid:
                 self.edges.append(CallEdge(
                     source=cs.caller_nid,
@@ -159,26 +161,23 @@ class CallResolutionDAG:
         self,
         cs: ExtractedCallSite,
         callee: str,
+        caller_labels: dict[str, str],
         label_index: dict[str, dict[str, str]],
         import_map: dict[str, dict[str, str]],
         inverted_label_index: dict[str, list[tuple[str, str]]] | None = None,
     ) -> str | None:
         caller_file = cs.caller_file
 
-        if caller_file in label_index:
-            file_labels = label_index[caller_file]
-            if callee in file_labels:
-                nid = file_labels[callee]
-                if nid != cs.caller_nid:
-                    return nid
+        if callee in caller_labels:
+            nid = caller_labels[callee]
+            if nid != cs.caller_nid:
+                return nid
 
         if cs.callee_receiver:
             receiver_lower = cs.callee_receiver.lower()
-            if caller_file in label_index:
-                file_labels = label_index[caller_file]
-                for label, nid in file_labels.items():
-                    if label.startswith(f"{receiver_lower}.") and label.endswith(f".{callee}"):
-                        return nid
+            for label, nid in caller_labels.items():
+                if label.startswith(f"{receiver_lower}.") and label.endswith(f".{callee}"):
+                    return nid
 
             if self._mro_strategy and self._class_hierarchy:
                 result = self._mro_strategy.resolve(

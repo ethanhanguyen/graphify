@@ -42,16 +42,24 @@ def god_nodes(G: nx.Graph, top_n: int = 10) -> list[dict]:
 
     File-level hub nodes are excluded: they accumulate import/contains edges
     mechanically and don't represent meaningful architectural abstractions.
+
+    Labels are deduplicated: if multiple nodes share the same label (e.g. a class
+    defined in multiple source files), only the highest-degree instance is kept.
     """
     degree = dict(G.degree())
     sorted_nodes = sorted(degree.items(), key=lambda x: x[1], reverse=True)
     result = []
+    seen_labels = set()
     for node_id, deg in sorted_nodes:
         if _is_file_node(G, node_id) or _is_concept_node(G, node_id):
             continue
+        label = G.nodes[node_id].get("label", node_id)
+        if label in seen_labels:
+            continue
+        seen_labels.add(label)
         result.append({
             "id": node_id,
-            "label": G.nodes[node_id].get("label", node_id),
+            "label": label,
             "degree": deg,
         })
         if len(result) >= top_n:

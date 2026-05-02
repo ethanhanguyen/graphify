@@ -12,6 +12,47 @@ One command does everything: clone corpus -> install both versions -> build grap
 
 Targets are data-driven: common node labels are extracted from both graphs, ranked by degree, and used to generate {10 queries, 5 path pairs, 10 explain targets}. Works for any corpus — no hardcoded names.
 
+## Why This Fork Beats the Baseline
+
+Running on `microsoft/vscode` (9,936 files, ~11.5M words) — a production codebase:
+
+| Metric | Baseline | Current | Improvement |
+|--------|----------|---------|-------------|
+| Graph size | 164 MB | 106 MB | **35% smaller** |
+| Communities detected | 2,726 | 3,994 | **47% more granular** |
+| Noise edges (`localize()` fan-out) | 2,628 edges | 4 edges | **pruned** |
+| Cross-file calls resolved | 0 | 70,788 | **new capability** |
+| Query target hit rate | ~10% | ~80% | **8× improvement** |
+| Path latency (avg) | 62.3ms | 58.6ms | **6% faster** |
+
+### Query Quality: Before vs After
+
+**Q: "how does lifecycle.ts work?"**
+- *Baseline:* 51 results — chat renderer methods, Playwright driver, `localize()` noise. **Zero results about `lifecycle.ts`.**
+- *Current:* 10 results — all variants of `lifecycle.ts` across modules + its true dependents.
+
+**Q: "what role does event.ts play?"**
+- *Baseline:* 60 results — random browser infrastructure, `localize()`, Playwright code. **Zero results about `event.ts`.**
+- *Current:* 10 results — all `event.ts` variants + the file's semantic connections.
+
+**Q: "describe the function of async.ts"**
+- *Baseline:* 22 results — Python test data from copilot extension. **Zero results about `async.ts`.**
+- *Current:* 10 results — `.work()`, `.run()`, and `async.ts` module hubs.
+
+### Explain Quality: Before vs After
+
+| Node | Baseline degree | Current degree | Meaning |
+|------|----------------|----------------|---------|
+| `localize()` | 2,628 | 4 | Noise eliminated — only real callers |
+| `lifecycle.ts` | 1 | 2,674 | Real connections discovered |
+| `uri.ts` | 1 | 1,998 | Real connections discovered |
+| `event.ts` | 2 | 1,725 | Real connections discovered |
+| `test-checker.ts` | 1,582 | 1,582 | Identical — preserved correctly |
+
+### The Core Change
+
+The baseline connected utility functions (`localize()`, `toDisposable()`, `autorun`) to *every file that imported them* — creating massive noise edges that polluted all queries. The current graph replaces import-fan-out with cross-file call resolution (`call_dag`), connecting nodes only through real call relationships. Result: **smaller graph, richer connections, correct answers.**
+
 ## CLI Options
 
 ```

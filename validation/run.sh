@@ -57,6 +57,7 @@ Output:
   runs/YYYY-MM-DD-HHMMSS/
     out-baseline/   graph.json + GRAPH_REPORT.md + build.log
     out-current/    graph.json + GRAPH_REPORT.md + build.log
+    responses/      raw CLI output for all 50 query/path/explain calls
     COMPARISON.md   human-readable comparison report
     metrics.json    machine-readable metrics (CI-gatable)
     ASSESSMENT.md   progress/regression + recommendations

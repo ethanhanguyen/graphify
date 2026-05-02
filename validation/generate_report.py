@@ -278,8 +278,12 @@ def _run_pair(venv_b, venv_c, cmd, args_b, args_c):
     return out_b, out_c
 
 
-def run_all_queries(venv_b, venv_c, out_b, out_c, queries, paths, explains):
+def run_all_queries(venv_b, venv_c, out_b, out_c, queries, paths, explains, run_dir=None):
     results = {}
+    responses_dir = None
+    if run_dir:
+        responses_dir = run_dir / "responses"
+        responses_dir.mkdir(parents=True, exist_ok=True)
 
     # Query
     print("  Running query commands...")
@@ -297,6 +301,9 @@ def run_all_queries(venv_b, venv_c, out_b, out_c, queries, paths, explains):
         for fut in as_completed(futures):
             i, q_label = futures[fut]
             out_b_str, out_c_str = fut.result()
+            if responses_dir:
+                (responses_dir / f"query_b_{i:02d}.txt").write_text(out_b_str)
+                (responses_dir / f"query_c_{i:02d}.txt").write_text(out_c_str)
             results["query"].append({
                 "idx": i,
                 "label": q_label,
@@ -326,6 +333,9 @@ def run_all_queries(venv_b, venv_c, out_b, out_c, queries, paths, explains):
         for fut in as_completed(futures):
             i, p_label = futures[fut]
             out_b_str, out_c_str = fut.result()
+            if responses_dir:
+                (responses_dir / f"path_b_{i:02d}.txt").write_text(out_b_str)
+                (responses_dir / f"path_c_{i:02d}.txt").write_text(out_c_str)
             results["path"].append({
                 "idx": i,
                 "label": p_label,
@@ -357,6 +367,9 @@ def run_all_queries(venv_b, venv_c, out_b, out_c, queries, paths, explains):
             out_b_str, out_c_str = fut.result()
             b_deg = _parse_explain_degree(out_b_str)
             c_deg = _parse_explain_degree(out_c_str)
+            if responses_dir:
+                (responses_dir / f"explain_b_{i:02d}.txt").write_text(out_b_str)
+                (responses_dir / f"explain_c_{i:02d}.txt").write_text(out_c_str)
             results["explain"].append({
                 "idx": i,
                 "label": e_label,
@@ -413,6 +426,7 @@ def main():
             args.venv_b, args.venv_c,
             args.out_b, args.out_c,
             queries, paths, explains,
+            run_dir=args.run_dir,
         )
         print(f"  CLI queries completed in {time.perf_counter() - t0:.1f}s")
 
